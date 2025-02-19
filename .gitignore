@@ -1,12 +1,3 @@
-# Ignore data folder
-data/
-
-# Ignore results folder 
-results/
-
-# Ignore src folder
-src/
-
 # Python virtual environment
 .env/
 .venv/
