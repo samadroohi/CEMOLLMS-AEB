@@ -1,0 +1,26 @@
+# Ignore data folder
+data/
+
+# Ignore results folder 
+results/
+
+# Ignore src folder
+src/
+
+# Python virtual environment
+.env/
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore predicts folder
+predicts/
+
+# Ignore configs
+configs/ 
