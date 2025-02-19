@@ -69,16 +69,55 @@ def run_inference():
             generation_output = model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
+                return_dict_in_generate=True,
+                output_scores=True,
                 **Config.GENERATION_CONFIG
             )
             
-            for j in range(generation_output.shape[0]):
-                response = tokenizer.decode(generation_output[j], skip_special_tokens=True)
-                data_one = {"output": response}
+            sequences = generation_output.sequences
+            logits = generation_output.scores  # Original logits from the model
+            
+            for j in range(sequences.shape[0]):
+                response = tokenizer.decode(sequences[j], skip_special_tokens=True)
+                
+                # Store both full logits and probabilities for each token position
+                token_info = []
+                for step_logits in logits:
+                    # Get logits for current sequence
+                    seq_logits = step_logits[j]  # Shape: [vocab_size]
+                    
+                    # Get top k logits and their indices
+                    top_k = 5  # Adjust this number to get more or fewer top tokens
+                    top_logits, top_indices = seq_logits.topk(top_k)
+                    
+                    # Convert to probabilities
+                    probs = seq_logits.softmax(dim=-1)
+                    top_probs = probs[top_indices]
+                    
+                    # Get corresponding tokens
+                    top_tokens = [tokenizer.decode([idx.item()]) for idx in top_indices]
+                    
+                    # Store information for this position
+                    step_info = {
+                        "top_tokens": top_tokens,
+                        "logits": top_logits.tolist(),
+                        "probabilities": top_probs.tolist(),
+                    }
+                    token_info.append(step_info)
+                
+                data_one = {
+                    "output": response,
+                    "token_info": token_info
+                }
                 write_f.write(json.dumps(data_one, ensure_ascii=False) + "\n")
-                responses.append(response)
+                
+                # Print example output for the first token
                 print(f"Generated response {i+j+1}/{len(instruction_list)}:")
-                print(response)
+                print(f"Response: {response}")
+                print(f"First token details:")
+                print(f"Top tokens: {token_info[0]['top_tokens']}")
+                print(f"Logits: {token_info[0]['logits']}")
+                print(f"Probabilities: {token_info[0]['probabilities']}")
                 print("-" * 50)
 
 if __name__ == "__main__":
