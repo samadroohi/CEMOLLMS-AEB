@@ -8,7 +8,12 @@ class Config:
     # Data paths
     INFER_FILE = "data/AEB.json"
     PREDICT_FILE = "predicts/predict.json"
-    
+    TASK_TYPES = {
+        "classification": ["EI-oc", "V-oc", "SST5", "TDT"],
+        "regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "SST", "Emobank"],
+        "multiclass_classification": [ "GoEmotion", "E-c"]
+    }
+    DS_TYPE = "EI-reg"
     # Generation settings
     BATCH_SIZE = 16
     SEED = 123

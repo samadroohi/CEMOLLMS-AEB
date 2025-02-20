@@ -48,11 +48,16 @@ def run_inference():
     
     # Load and prepare data
     infer_data = pd.read_json(Config.INFER_FILE, lines=True)
+    # Filter data based on ds_type
+    infer_data = infer_data[infer_data['ds_type'] == Config.DS_TYPE]
     instruction_list = infer_data.apply(
         lambda row: pd.Series(
             {'instruction': f"Human: \n{row['instruction']}\n\nAssistant:\n"}
         ), axis=1
     )['instruction'].to_list()
+    true_values = infer_data['output'].to_list()
+    ds_type = infer_data['ds_type'].to_list()
+
     
     # Generate responses
     responses = []
@@ -61,6 +66,9 @@ def run_inference():
     with open(Config.PREDICT_FILE, 'w', encoding="utf-8") as write_f:
         for i in range(0, len(instruction_list), Config.BATCH_SIZE):
             batch_data = instruction_list[i: min(i + Config.BATCH_SIZE, len(instruction_list))]
+            batch_true_values = true_values[i: min(i + Config.BATCH_SIZE, len(true_values))]
+            batch_ds_type = ds_type[i: min(i + Config.BATCH_SIZE, len(ds_type))]
+
             inputs = tokenizer(batch_data, return_tensors="pt", padding=True)
             
             input_ids = inputs.input_ids.to(device)
@@ -70,54 +78,41 @@ def run_inference():
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 return_dict_in_generate=True,
-                output_scores=True,
+                output_logits=True,
                 **Config.GENERATION_CONFIG
             )
-            
             sequences = generation_output.sequences
-            logits = generation_output.scores  # Original logits from the model
+            logits = generation_output.logits  # This is a tuple of tensors
+            num_generated = len(logits)  # Number of generated tokens
             
-            for j in range(sequences.shape[0]):
+            for j in range(sequences.shape[0]):  # Loop through each item in batch
                 response = tokenizer.decode(sequences[j], skip_special_tokens=True)
+                generated_tokens = sequences[j, -num_generated:]  # Get just the new tokens
                 
-                # Store both full logits and probabilities for each token position
-                token_info = []
-                for step_logits in logits:
-                    # Get logits for current sequence
-                    seq_logits = step_logits[j]  # Shape: [vocab_size]
-                    
-                    # Get top k logits and their indices
-                    top_k = 5  # Adjust this number to get more or fewer top tokens
-                    top_logits, top_indices = seq_logits.topk(top_k)
-                    
-                    # Convert to probabilities
-                    probs = seq_logits.softmax(dim=-1)
-                    top_probs = probs[top_indices]
-                    
-                    # Get corresponding tokens
-                    top_tokens = [tokenizer.decode([idx.item()]) for idx in top_indices]
-                    
-                    # Store information for this position
-                    step_info = {
-                        "top_tokens": top_tokens,
-                        "logits": top_logits.tolist(),
-                        "probabilities": top_probs.tolist(),
-                    }
-                    token_info.append(step_info)
+                # Get logits for this batch item
+                token_logits = []
+                for step in range(num_generated):
+                    # Get logit for the token that was actually generated
+                    generated_token = generated_tokens[step]
+                    token_logits.append(logits[step][j][generated_token].item())
                 
                 data_one = {
                     "output": response,
-                    "token_info": token_info
+                    "token_logits": token_logits,
+                    "tokens": [tokenizer.decode(t) for t in generated_tokens],
+                    "true_value": batch_true_values[j],
+                    "ds_type": batch_ds_type[j]
                 }
                 write_f.write(json.dumps(data_one, ensure_ascii=False) + "\n")
-                
-                # Print example output for the first token
+                responses.append(response)
+                print(f"Input type: {batch_ds_type[j]}")
+                print(f"True value: {batch_true_values[j]}")
                 print(f"Generated response {i+j+1}/{len(instruction_list)}:")
                 print(f"Response: {response}")
-                print(f"First token details:")
-                print(f"Top tokens: {token_info[0]['top_tokens']}")
-                print(f"Logits: {token_info[0]['logits']}")
-                print(f"Probabilities: {token_info[0]['probabilities']}")
+                print("Generated tokens and their logits:")
+                
+                for token, logit in zip([tokenizer.decode(t) for t in generated_tokens], token_logits):
+                    print(f"Token: '{token}', Logit: {logit:.4f}")
                 print("-" * 50)
 
 if __name__ == "__main__":
