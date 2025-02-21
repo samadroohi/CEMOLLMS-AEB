@@ -7,7 +7,9 @@ import json
 import random
 import numpy as np
 import argparse
-
+from tqdm import tqdm
+from conformalprediction.regression import ConformalRegressionPredictor
+from utils import *
 def seed_everything(seed=23):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -61,9 +63,10 @@ def run_inference():
     
     # Generate responses
     responses = []
-    os.makedirs(os.path.dirname(Config.PREDICT_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(Config.RESULTS_FILE), exist_ok=True)
     
-    with open(Config.PREDICT_FILE, 'w', encoding="utf-8") as write_f:
+    progress_bar = tqdm(total=len(instruction_list), desc="Generating responses")
+    with open(Config.RESULTS_FILE, 'w', encoding="utf-8") as write_f:
         for i in range(0, len(instruction_list), Config.BATCH_SIZE):
             batch_data = instruction_list[i: min(i + Config.BATCH_SIZE, len(instruction_list))]
             batch_true_values = true_values[i: min(i + Config.BATCH_SIZE, len(true_values))]
@@ -86,8 +89,8 @@ def run_inference():
             num_generated = len(logits)  # Number of generated tokens
             
             for j in range(sequences.shape[0]):  # Loop through each item in batch
-                response = tokenizer.decode(sequences[j], skip_special_tokens=True)
                 generated_tokens = sequences[j, -num_generated:]  # Get just the new tokens
+                answer = tokenizer.decode(generated_tokens, skip_special_tokens=True)
                 
                 # Get logits for this batch item
                 token_logits = []
@@ -96,24 +99,69 @@ def run_inference():
                     generated_token = generated_tokens[step]
                     token_logits.append(logits[step][j][generated_token].item())
                 
+                if batch_ds_type[j] in Config.TASK_TYPES["classification"]:
+                    #Compute probs
+                    pass
+                elif batch_ds_type[j] in Config.TASK_TYPES["multiclass_classification"]:
+                    #Compute probs
+                    pass
+                # For regression, probs is None
+    
                 data_one = {
-                    "output": response,
-                    "token_logits": token_logits,
-                    "tokens": [tokenizer.decode(t) for t in generated_tokens],
+                    "ds_type": batch_ds_type[j],
+                    "input": batch_data[j],
                     "true_value": batch_true_values[j],
-                    "ds_type": batch_ds_type[j]
+                    "prediction": answer,
+                    "probs": None,
                 }
+
                 write_f.write(json.dumps(data_one, ensure_ascii=False) + "\n")
-                responses.append(response)
-                print(f"Input type: {batch_ds_type[j]}")
-                print(f"True value: {batch_true_values[j]}")
-                print(f"Generated response {i+j+1}/{len(instruction_list)}:")
-                print(f"Response: {response}")
-                print("Generated tokens and their logits:")
+                responses.append(answer)
+                progress_bar.update(1)  # Update progress bar for each processed item
                 
-                for token, logit in zip([tokenizer.decode(t) for t in generated_tokens], token_logits):
-                    print(f"Token: '{token}', Logit: {logit:.4f}")
-                print("-" * 50)
+                if Config.VERBOSE:  # Add verbose flag to control detailed output
+                    print(f"Input type: {batch_ds_type[j]}")
+                    print(f"True value: {batch_true_values[j]}")
+                    print(f"Generated response {i+j+1}/{len(instruction_list)}:")
+                    print(f"Response: {answer}")
+                    print("Generated tokens and their logits:")
+                    
+                    for token, logit in zip([tokenizer.decode(t) for t in generated_tokens], token_logits):
+                        print(f"Token: '{token}', Logit: {logit:.4f}")
+                    print("-" * 50)
+    
+    progress_bar.close()
+def run_conformal_prediction(dataset_type ,temperature):
+    #load results
+    
+    with open(Config.RESULTS_FILE, 'r', encoding="utf-8") as read_f:
+        results = [json.loads(line) for line in read_f]
+    #filter results using DS_TYPE
+    results = [result for result in results if result["ds_type"] == dataset_type]
+    #shuffle results and divide into calibration and test set using CALIBRATION_RATE
+    results = cleaning_results(results)
+    random.shuffle(results)
+    calibration_size = int(len(results) * Config.CALIBRATION_RATE)
+    true_calibration = [result["true_value"] for result in results[:calibration_size]]
+    pred_calibration = [result["prediction"] for result in results[:calibration_size]]
+
+    input_test = [result["input"] for result in results[calibration_size:]]
+    true_test = [result["true_value"] for result in results[calibration_size:]]
+    pred_test = [result["prediction"] for result in results[calibration_size:]]
+    probs_test = [result["probs"] for result in results[calibration_size:]]
+    
+
+    #compute conformal prediction
+    baseline_cp = get_predictor(dataset_type)
+    for alpha in Config.CP_ALPHA:
+        q_hat = baseline_cp.fit(true_calibration, pred_calibration, alpha)
+        conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, q_hat)
+        
+        print(f"Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}")
+        save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, conformal_results, alpha)
 
 if __name__ == "__main__":
-    run_inference()
+    #run_inference()
+    temperature = Config.GENERATION_CONFIG["temperature"]
+    dataset_type = Config.DS_TYPE
+    run_conformal_prediction(dataset_type,temperature)
