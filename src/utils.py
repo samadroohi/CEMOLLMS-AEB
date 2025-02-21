@@ -111,10 +111,23 @@ def save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, 
         return obj
 
     try:
+        # For the first alpha value (0.1), start fresh by clearing existing results
+        if alpha == Config.CP_ALPHA[0]:
+            existing_results = {}
+        else:
+            # For subsequent alpha values, load existing results
+            with open(path, 'r') as f:
+                try:
+                    existing_results = json.load(f)
+                except json.JSONDecodeError:
+                    print("Warning: Could not read existing results file. Starting fresh.")
+                    existing_results = {}
+
         # Convert prediction_sets tuple to list first
         prediction_sets = list(conformal_results[0]) if isinstance(conformal_results[0], tuple) else conformal_results[0]
         
-        results = {
+        # Create results for current alpha
+        alpha_results = {
             "ds_type": dataset_type,
             "alpha": float(alpha),
             "coverage": convert_to_serializable(conformal_results[1]),
@@ -125,9 +138,14 @@ def save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, 
             "interval_size": convert_to_serializable(conformal_results[2])
         }
         
+        # Add or update results for this alpha
+        existing_results[str(alpha)] = alpha_results
+        
+        # Save updated results
         with open(path, 'w') as f:
-            json.dump(results, f, indent=2)
-        print(f"Conformal Prediction Results saved to: {path}")
+            json.dump(existing_results, f, indent=2)
+        print(f"Conformal Prediction Results for α={alpha} saved to: {path}")
+        
     except Exception as e:
         print(f"Error saving results: {e}")
 

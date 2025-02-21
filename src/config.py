@@ -33,6 +33,8 @@ class Config:
     }
     RESULTS_FILE = f"results/responses/{DS_TYPE}/temp_{GENERATION_CONFIG['temperature']}/{MODEL_NAME_OR_PATH.split('/')[-1]}.json"
     CONFORMAL_RESULTS_FILE = f"results/conformal_results/{DS_TYPE}/temp_{GENERATION_CONFIG['temperature']}/{MODEL_NAME_OR_PATH.split('/')[-1]}.json"
+    PLOTS_DIR = f"results/plots/{DS_TYPE}/temp_{GENERATION_CONFIG['temperature']}/{MODEL_NAME_OR_PATH.split('/')[-1]}"
+
     # Valid data types for each task
     VALID_D_TYPES = {
         "EI-reg": {"min": 0, "max": 1},  # Emotion intensity scores from 0 to 1
