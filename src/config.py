@@ -8,13 +8,14 @@ class Config:
     # Data paths
     INFER_FILE = "data/AEB.json"
     TASK_TYPES = {
-        "classification": ["EI-oc", "V-oc", "SST5", "TDT"],
+        "classification": ["SST5", "TDT"],
+        "ordinal_classification": ["EI-oc", "V-oc"],
         "regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "SST", "Emobank"],
         "multiclass_classification": [ "GoEmotion", "E-c"]
     }
     VERBOSE = False  # Set to True if you want detailed output
     CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    DS_TYPE = "EI-reg"
+    DS_TYPE = "EI-oc"
     CALIBRATION_RATE = 0.1
     # Generation settings
     BATCH_SIZE = 16
@@ -38,7 +39,5 @@ class Config:
     # Valid data types for each task
     VALID_D_TYPES = {
         "EI-reg": {"min": 0, "max": 1},  # Emotion intensity scores from 0 to 1
-        "V-reg": {"min": 0, "max": 1},   # Valence scores from 0 to 1
-        "SST": {"min": 0, "max": 1},     # Sentiment scores from 0 to 1
-        "Emobank": {"min": 1, "max": 5}  # Emotion scores from 1 to 5
+        "EI-oc": {"0": "0: no E can be inferred", "1": "1: low amount of E can be inferred", "2": "2: moderate amount of E can be inferred", "3": "3: high amount of E can be inferred"}
     }

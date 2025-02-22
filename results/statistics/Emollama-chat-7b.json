@@ -1,5 +1,5 @@
 {
   "total_predictions": 4068,
-  "valid_predictions": 4067,
-  "invalid_predictions": 1
+  "valid_predictions": 0,
+  "invalid_predictions": 4068
 }
