@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import Config
 from analysis.analysis_utils import get_performance_metrics
-from visualization_utils import calibration_diagram
+from analysis.visualization_utils import calibration_diagram
 
 def run_analysis():
     try:
@@ -105,5 +105,4 @@ def run_analysis():
         print(f"Unexpected error during analysis: {e}")
         raise  # Add this to see the full traceback
 
-if __name__ == "__main__":
-    run_analysis()
+    

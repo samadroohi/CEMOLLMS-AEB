@@ -219,16 +219,89 @@ def save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, 
 
 
 def get_probs(generated_tokens, logits, tokenizer, ds_type):
-    if ds_type in Config.TASK_TYPES["ordinal_classification"]:
+    if ds_type =="EI-oc":
+        #0,1,2,3
         for i, token in enumerate(generated_tokens):
             answer = tokenizer.decode(token, skip_special_tokens=True)
             if answer in  Config.VALID_D_TYPES[ds_type].keys():
                 encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].keys()]
                 probs = [logits[i][token[1]] for token in encoded_classes]
                 return probs
+    elif ds_type == "V-oc":
+        # Handle values: 3,2,1,0,-1,-2,-3
+        unsigned_classes = ['3','2','1','0']
+        
+        unsigned_tokens = [tokenizer.encode(str(key), add_special_tokens=False) for key in unsigned_classes]
+        minus_token = tokenizer.encode('-', add_special_tokens=False)[0]  # Get the token ID for minus
+
+        for i, token in enumerate(generated_tokens):
+            answer = tokenizer.decode(token, skip_special_tokens=True)
             
+            if answer == '-':
+                # Case: negative number (-3,-2,-1)
+                # Get probabilities for the second token (the number after minus)
+                next_token_logits = logits[i + 1]
+                # Only 3,2,1 can follow the minus sign
+                valid_negative_nums = unsigned_tokens[:-1]  # Exclude '0'
+                
+                # Calculate probabilities for negative numbers
+                negative_probs = []
+                for num_token in valid_negative_nums:
+                    # Probability = P(-) * P(number|-)
+                    prob = torch.softmax(logits[i], dim=0)[minus_token] * \
+                          torch.softmax(next_token_logits, dim=0)[num_token[1]]
+                    negative_probs.append(float(prob))
+                
+                # Zero probability for unused negative numbers
+                while len(negative_probs) < 3:
+                    negative_probs.append(0.0)
+                
+                # Calculate probabilities for positive numbers (including 0)
+                positive_probs = []
+                for num_token in unsigned_tokens:
+                    prob = torch.softmax(logits[i], dim=0)[num_token[1]]
+                    positive_probs.append(float(prob))
+                
+                # Combine probabilities in order [3,2,1,0,-1,-2,-3]
+                probs = positive_probs + negative_probs[::-1]  # Reverse negative probs
+                return probs
+                
+            elif answer in unsigned_classes:
+                # Case: positive number or zero
+                current_logits = logits[i]
+                
+                # Calculate probabilities for positive numbers (including 0)
+                positive_probs = []
+                for num_token in unsigned_tokens:
+                    # Direct probability of the positive number
+                    prob = torch.softmax(current_logits, dim=0)[num_token[1]]
+                    positive_probs.append(float(prob))
+                
+                # Calculate probabilities for negative numbers
+                # P(negative) = P(current_digit) * P(-|digit) * P(second_digit|-)
+                negative_probs = []
+                next_position_logits = logits[i + 1] if i + 1 < len(logits) else None
+                
+                if next_position_logits is not None:
+                    for num_token in unsigned_tokens[:-1]:  # Exclude 0 for negative numbers
+                        # Probability of seeing minus after the current digit
+                        p_minus = torch.softmax(next_position_logits, dim=0)[minus_token]
+                        # Probability of seeing the digit after minus
+                        p_digit = torch.softmax(next_position_logits, dim=0)[num_token[1]]
+                        # Joint probability
+                        prob = float(p_minus * p_digit)
+                        negative_probs.append(prob)
+                else:
+                    # If we're at the end of the sequence, negative numbers are impossible
+                    negative_probs = [0.0] * 3
+                
+                # Combine probabilities in order [3,2,1,0,-1,-2,-3]
+                probs = positive_probs + negative_probs[::-1]
+                return probs
+
         print(f"Invalid answer: {answer}")
         return None
+
 def get_prediction_touples(predictions, dataset_type):
     '''
     This method generates tuple (key,class) for classification tasks e.g., ("joy", 3)

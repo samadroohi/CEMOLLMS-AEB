@@ -10,6 +10,7 @@ import argparse
 from tqdm import tqdm
 from conformalprediction.regression import ConformalRegressionPredictor
 from utils import  *
+from analysis.run_analysis import run_analysis
 def seed_everything(seed=23):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -164,6 +165,10 @@ def run_conformal_prediction(dataset_type):
         save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, conformal_results, alpha)
 
 if __name__ == "__main__":
-    #run_inference()
-    dataset_type = Config.DS_TYPE
-    run_conformal_prediction(dataset_type)
+    #1: Get model responses
+    run_inference()
+    #2: Get conformal prediction results
+    #dataset_type = Config.DS_TYPE
+    #run_conformal_prediction(dataset_type)
+    #3: Analyze results
+    #run_analysis()
