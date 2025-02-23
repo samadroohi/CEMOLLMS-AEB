@@ -119,7 +119,7 @@ def cleaning_results_ordinal_classification(results, ds_type):
             
             # Extract the numeric part from the prediction and check if it's in valid classes
             prediction = result["prediction"].strip().split(":")[0].strip()
-            if prediction in valid_classes.keys():
+            if prediction in valid_classes:
                 stats["valid_predictions"] += 1
                 valid_results.append(result)
             else:
@@ -193,7 +193,7 @@ def save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, 
 
         # Convert prediction_sets tuple to list first
         prediction_sets = list(conformal_results[0]) if isinstance(conformal_results[0], tuple) else conformal_results[0]
-        
+            
         # Create results for current alpha
         alpha_results = {
             "ds_type": dataset_type,
@@ -229,3 +229,31 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
             
         print(f"Invalid answer: {answer}")
         return None
+def get_prediction_touples(predictions, dataset_type):
+    '''
+    This method generates tuple (key,class) for classification tasks e.g., ("joy", 3)
+    Input format example: "3: high amount of joy can be inferred"
+    '''
+    result = []
+    if dataset_type == "EI-oc":
+        emotion_labels = ['anger', 'fear', 'joy', 'sadness']
+        
+        for pred in predictions:
+            try:
+                # Extract the numeric class (e.g., "3" from "3: high amount of joy...")
+                class_index = int(pred.split(':')[0].strip())
+                
+                # Find which emotion is mentioned in the prediction
+                emotion = None
+                for label in emotion_labels:
+                    if label in pred.lower():
+                        emotion = label
+                        break
+                
+                if emotion is not None:
+                    result.append((emotion, class_index))
+                
+            except (ValueError, AttributeError):
+                continue
+                
+    return result

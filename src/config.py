@@ -39,5 +39,15 @@ class Config:
     # Valid data types for each task
     VALID_D_TYPES = {
         "EI-reg": {"min": 0, "max": 1},  # Emotion intensity scores from 0 to 1
-        "EI-oc": {"0": "0: no E can be inferred", "1": "1: low amount of E can be inferred", "2": "2: moderate amount of E can be inferred", "3": "3: high amount of E can be inferred"}
-    }
+        "EI-oc": {
+            "0": "0: no E can be inferred",
+            "1": "1: low amount of E can be inferred",
+            "2": "2: moderate amount of E can be inferred",
+            "3": "3: high amount of E can be inferred"
+            }
+        }
+    #REVERSE_VALID_D_TYPES = {
+     #       v: k for key, sub_dict in VALID_D_TYPES.items() if isinstance(sub_dict, dict) 
+      #      for k, v in sub_dict.items()
+       # }
+

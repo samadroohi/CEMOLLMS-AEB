@@ -7,7 +7,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import Config
-from analysisutils import analyze_results, regression_calibration_diagram
+from analysis.analysis_utils import get_performance_metrics
+from visualization_utils import calibration_diagram
 
 def run_analysis():
     try:
@@ -19,7 +20,9 @@ def run_analysis():
         all_metrics = {}
         
         # Process each alpha value
-        for alpha in Config.CP_ALPHA:
+        first_alpha_metrics = None  # Store metrics for first alpha
+        
+        for alpha in [Config.CP_ALPHA[0]]:
             alpha_str = str(alpha)
             if alpha_str not in all_results:
                 print(f"Warning: No results found for α={alpha}")
@@ -28,8 +31,12 @@ def run_analysis():
             print(f"\nAnalyzing results for α={alpha}:")
             results = all_results[alpha_str]
             
-            metrics = analyze_results(results, Config.DS_TYPE, Config.TASK_TYPES)
+            metrics = get_performance_metrics(results, Config.DS_TYPE, Config.TASK_TYPES)
             all_metrics[alpha_str] = metrics
+            
+            # Store first alpha metrics if not already stored
+            if first_alpha_metrics is None:
+                first_alpha_metrics = metrics
             
             if Config.DS_TYPE in Config.TASK_TYPES["regression"]:
                 print("\nRegression Analysis Results:")
@@ -41,7 +48,7 @@ def run_analysis():
                 
                 # Generate calibration plot
                 output_dir = Config.PLOTS_DIR
-                plot_metrics = regression_calibration_diagram(
+                plot_metrics = calibration_diagram(
                     results,
                     Config.DS_TYPE,
                     alpha,
@@ -53,10 +60,31 @@ def run_analysis():
                 print(f"Average Interval Size: {plot_metrics['avg_interval_size']:.3f}")
                 print(f"Points within interval: {plot_metrics['in_interval_count']}/{plot_metrics['total_points']}")
                 
+        
             elif Config.DS_TYPE in Config.TASK_TYPES["classification"]:
                 print("\nClassification Analysis Results:")
                 # TODO: Add classification metrics display
                 pass
+            elif Config.DS_TYPE in Config.TASK_TYPES["ordinal_classification"]:
+                # Only print metrics for first alpha
+                if metrics == first_alpha_metrics:
+                    print("\nOrdinal Classification Analysis Results:")
+                    print(f"Accuracy (acc): {metrics['accuracy']:.4f}")
+                    print(f"Micro-F1 (mi-F1): {metrics['micro_f1']:.4f}")
+                    print(f"Macro-F1 (ma-F1): {metrics['macro_f1']:.4f}")
+                    print(f"Macro-Average Pearson (ave): {metrics['macro_average']:.4f}")
+                    
+                    print("\nPer-Emotion Pearson Correlation:")
+                    for emotion, pearson in metrics['per_emotion_pearson'].items():
+                        print(f"{emotion}: {pearson:.4f}")
+                    output_dir = Config.PLOTS_DIR
+                    plot_metrics = calibration_diagram(
+                    results,
+                    Config.DS_TYPE,
+                    alpha,
+                    output_dir=output_dir
+                )
+                    
             elif Config.DS_TYPE in Config.TASK_TYPES["multiclass_classification"]:
                 print("\nMulticlass Classification Analysis Results:")
                 # TODO: Add multiclass classification metrics display

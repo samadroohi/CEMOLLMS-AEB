@@ -7,13 +7,13 @@ class BaseConformalPredictor(ABC):
         self.classes = None
     
     @abstractmethod
-    def fit(self, y_true, y_pred, alpha):
+    def fit(self, y_true, y_pred,probs_calibration, alpha):
         pass
     
     @abstractmethod
-    def predict(self, y_pred, quantiles):
+    def predict(self, y_pred,probs_test, quantiles):
         pass
     
     @abstractmethod
-    def get_conformal_results(self, y_true, y_pred, quantiles):
+    def get_conformal_results(self, y_true, y_pred,probs_test, quantiles):
         pass 

@@ -138,23 +138,32 @@ def run_conformal_prediction(dataset_type):
     calibration_size = int(len(results) * Config.CALIBRATION_RATE)
     true_calibration = [result["true_value"] for result in results[:calibration_size]]
     pred_calibration = [result["prediction"] for result in results[:calibration_size]]
+    probs_calibration = [result["probs"] for result in results[:calibration_size]]
 
     input_test = [result["input"] for result in results[calibration_size:]]
     true_test = [result["true_value"] for result in results[calibration_size:]]
     pred_test = [result["prediction"] for result in results[calibration_size:]]
     probs_test = [result["probs"] for result in results[calibration_size:]]
     
+    #Convert predictions and true values to touple of class and keyword if it is classification
+    if dataset_type in Config.TASK_TYPES['ordinal_classification']:
+        true_calibration = get_prediction_touples(true_calibration, dataset_type)
+        pred_calibration = get_prediction_touples(pred_calibration,dataset_type)
+        #true_calibration = [int(prediction.strip().split(":")[0].strip()) for prediction in true_calibration]
+        true_test = get_prediction_touples(true_test, dataset_type)
+        pred_test = get_prediction_touples(pred_test,dataset_type)
+
 
     #compute conformal prediction
     baseline_cp = get_predictor(dataset_type)
     for alpha in Config.CP_ALPHA:
-        q_hat = baseline_cp.fit(true_calibration, pred_calibration, alpha)
-        conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, q_hat)
+        q_hat = baseline_cp.fit(true_calibration, pred_calibration,probs_calibration, alpha)
+        conformal_results = baseline_cp.get_conformal_results(true_test,pred_test, probs_test, q_hat)
         
         print(f"Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}")
         save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, conformal_results, alpha)
 
 if __name__ == "__main__":
-    run_inference()
-    #dataset_type = Config.DS_TYPE
-    #run_conformal_prediction(dataset_type)
+    #run_inference()
+    dataset_type = Config.DS_TYPE
+    run_conformal_prediction(dataset_type)

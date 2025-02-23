@@ -7,7 +7,7 @@ class ConformalRegressionPredictor(BaseConformalPredictor):
         self.task_type = "regression"
         self.residuals = None
 
-    def fit(self, y_true, y_pred, alpha):
+    def fit(self, y_true, y_pred,probs_calibration, alpha):
         """
         Computes the baseline conformal prediction quantiles.
         
@@ -35,7 +35,7 @@ class ConformalRegressionPredictor(BaseConformalPredictor):
         
         return (lower_q, upper_q)
     
-    def predict(self, y_pred, quantiles):
+    def predict(self, y_pred,probs_test, quantiles):
         lower_q, upper_q = quantiles
         # Convert predictions to float array
         y_pred = np.array(y_pred, dtype=float)
@@ -45,7 +45,7 @@ class ConformalRegressionPredictor(BaseConformalPredictor):
 
         return lower_bounds, upper_bounds
     
-    def get_conformal_results(self, y_true, y_pred, quantiles):
+    def get_conformal_results(self, y_true, y_pred,probs_test, quantiles):
         """
         Get conformal prediction results and statistics.
         

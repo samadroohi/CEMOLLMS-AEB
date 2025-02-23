@@ -8,7 +8,7 @@ class ClassificationConformalPredictor(BaseConformalPredictor):
         super().__init__()
         self.task_type = "classification"
     
-    def fit(self, y_true, y_pred, alpha):
+    def fit(self, y_true, y_pred,probs_calibration, alpha):
         """
         Calibrate the conformal predictor for classification.
         
@@ -35,7 +35,7 @@ class ClassificationConformalPredictor(BaseConformalPredictor):
         
         return sorted_scores[index].item()
 
-    def predict(self, y_pred, threshold):
+    def predict(self, y_pred,probs_test, threshold):
         """
         Get prediction sets for each sample.
         
@@ -61,7 +61,7 @@ class ClassificationConformalPredictor(BaseConformalPredictor):
             
         return prediction_sets
 
-    def get_conformal_results(self, y_true, y_pred, threshold):
+    def get_conformal_results(self, y_true, y_pred,probs_test, threshold):
         """
         Get conformal prediction results and statistics.
         
