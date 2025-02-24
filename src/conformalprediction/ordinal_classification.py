@@ -22,8 +22,7 @@ class OrdinalClassificationConformalPredictor(BaseConformalPredictor):
             Conformity threshold
         """
         # Convert inputs to tensors
-        logit_values = torch.tensor(probs_calibration, dtype=torch.float32)
-        softmax_probabilities = torch.softmax(logit_values, dim=1)
+        softmax_probabilities = torch.tensor(probs_calibration, dtype=torch.float32)
         true_labels = torch.tensor([touple[1] for touple in y_true], dtype=torch.long)
 
         # Compute nonconformity scores
@@ -48,8 +47,7 @@ class OrdinalClassificationConformalPredictor(BaseConformalPredictor):
         Returns:
             List of prediction sets for each sample
         """
-        logit_values = torch.tensor(probs_test, dtype=torch.float32)
-        softmax_probabilities = torch.softmax(logit_values, dim=1)
+        softmax_probabilities = torch.tensor(probs_test, dtype=torch.float32)
         prediction_sets = []
         for probs in softmax_probabilities:
             nonconformity_scores = 1 - probs

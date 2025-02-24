@@ -95,13 +95,13 @@ def regression_calibration_diagram(results: dict,
             print(f"Plot saved to: {output_path}")
         else:
             plt.show()
-        
-        return {
+        data ={
             'coverage': coverage,
             'avg_interval_size': avg_interval_size,
             'in_interval_count': np.sum(in_interval),
             'total_points': len(y_true)
         }
+        return data
     
     except Exception as e:
         print(f"Error in regression_calibration_diagram: {str(e)}")
@@ -113,11 +113,10 @@ def regression_calibration_diagram(results: dict,
 
 def classification_relibaility_diagram(results: dict,
                                      dataset_type: str,
-                                     alpha: float,
                                      output_dir: str = None,
                                      title: str = None,
                                      figsize: tuple = (10, 6),
-                                     debug: bool = True):
+                                     ):
     """
     Create a reliability diagram for classification predictions.
     
@@ -131,39 +130,18 @@ def classification_relibaility_diagram(results: dict,
         debug (bool, optional): Whether to print debug information
     """
     try:
-        def softmax(x):
-            exp_x = np.exp(x - np.max(x))
-            return exp_x / exp_x.sum()
 
         # Extract true class indices
         y_true = np.array([label[1] for label in results["true_values"]])
         
-        if debug:
-            print("Data validation:")
-            print(f"Number of samples: {len(y_true)}")
-            print(f"Unique true classes: {np.unique(y_true)}")
-            print(f"Shape of logits: {np.array(results['probs']).shape}")
         
         # Convert logits to probabilities and get probability for predicted class
         predictions = []
-        for i, (logits, true_idx) in enumerate(zip(results["probs"], y_true)):
-            probs = softmax(np.array(logits))
+        for i, (probs, true_idx) in enumerate(zip(results["probs"], y_true)):
+            probs = np.array(probs)
             predictions.append(probs[true_idx])
             
-            if debug and i < 5:  # Print first 5 examples
-                print(f"\nExample {i}:")
-                print(f"Logits: {logits}")
-                print(f"Probabilities: {probs}")
-                print(f"True class: {true_idx}")
-                print(f"Probability for true class: {probs[true_idx]}")
-        
         predictions = np.array(predictions)
-        
-        if debug:
-            print("\nPrediction statistics:")
-            print(f"Mean prediction: {np.mean(predictions):.3f}")
-            print(f"Min prediction: {np.min(predictions):.3f}")
-            print(f"Max prediction: {np.max(predictions):.3f}")
         
         # Create figure
         plt.figure(figsize=figsize)
@@ -223,8 +201,40 @@ def classification_relibaility_diagram(results: dict,
         # Add legend
         plt.legend(loc='upper left')
         
-        # Save or show plot
+        # Calculate additional metrics
+        # ECE (Expected Calibration Error)
+        valid_accuracies = bin_accuracies[valid_bins]
+        valid_centers = bin_centers[valid_bins]
+        valid_counts = np.array(bin_counts)[valid_bins]
+        total_samples = np.sum(valid_counts)
+        
+        # Calculate ECE as weighted average of |accuracy - confidence|
+        ece = np.sum(valid_counts * np.abs(valid_accuracies - valid_centers)) / total_samples
+        
+        # MCE (Maximum Calibration Error)
+        mce = np.max(np.abs(valid_accuracies - valid_centers))
+        
+        # Brier Score (mean squared error between predictions and actual outcomes)
+        y_true_one_hot = np.array([pred[1] == y_true[i] for i, pred in enumerate(results["predictions"])])
+        brier_score = np.mean((predictions - y_true_one_hot) ** 2)
+        
+        # Save metrics to file if output_dir is provided
         if output_dir:
+            metrics = {
+                'accuracy': float(np.mean(y_true == np.array([pred[1] for pred in results["predictions"]]))),
+                'ece': float(ece),
+                'mce': float(mce),
+                'brier_score': float(brier_score),
+                'mean_prediction': float(np.mean(predictions))
+            }
+            metrics_path = os.path.join(output_dir, f'calibration_metrics_{dataset_type}.txt')
+            with open(metrics_path, 'w') as f:
+                for metric_name, value in metrics.items():
+                    f.write(f"{metric_name}: {value:.4f}\n")
+            print(f"Metrics saved to: {metrics_path}")
+        
+        # Save or show plot
+
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, f'reliability_plot_{dataset_type}.png')
             plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -233,19 +243,7 @@ def classification_relibaility_diagram(results: dict,
         else:
             plt.show()
             
-        if debug:
-            print("\nBin statistics:")
-            for i, (acc, count) in enumerate(zip(bin_accuracies[valid_bins], 
-                                               np.array(bin_counts)[valid_bins])):
-                print(f"Bin {i}: accuracy={acc:.3f}, count={count}")
-        
-        return {
-            'bin_accuracies': bin_accuracies[valid_bins].tolist(),
-            'bin_counts': np.array(bin_counts)[valid_bins].tolist(),
-            'confidence_intervals': confidence_intervals[valid_bins].tolist(),
-            'mean_prediction': float(np.mean(predictions)),
-            'accuracy': float(np.mean(y_true == np.array([pred[1] for pred in results["predictions"]])))
-        }
+        return metrics
         
     except Exception as e:
         print(f"Error in classification_reliability_diagram: {str(e)}")
@@ -256,13 +254,109 @@ def classification_relibaility_diagram(results: dict,
 
 def multiclass_classification_relibaility_diagram(results,dataset_type, alpha, output_dir):
     pass
-
-def calibration_diagram(results,dataset_type, alpha, output_dir):
-    if dataset_type in Config.TASK_TYPES['regression']:
-        regression_calibration_diagram(results,dataset_type, alpha, output_dir)
-    elif dataset_type in Config.TASK_TYPES['classification'] or dataset_type in Config.TASK_TYPES['ordinal_classification'] :
-        classification_relibaility_diagram(results,dataset_type, alpha, output_dir)
-    elif dataset_type in Config.TASK_TYPES['multiclass_classification']:
-        multiclass_classification_relibaility_diagram(results,dataset_type, alpha, output_dir)
+def cp_diagrams(results,dataset_type, output_dir):
+    plot_confidence_vs_coverage(results, dataset_type, output_dir)
+    plot_coverage_vs_prediction_set_size(results, dataset_type, output_dir)
 
     
+
+
+def plot_confidence_vs_coverage(results, dataset_type, output_dir=None):
+    """
+    Plots confidence vs empirical coverage and annotates the plot with the ACE (Average Coverage Error).
+    
+    Args:
+        results (dict): Dictionary containing conformal prediction results.
+        dataset_type (str): Dataset type.
+        alphas (list): A list of confidence levels to evaluate.
+        output_dir (str, optional): Directory to save the plot.
+    """
+    coverage = []
+    ace = 0
+    alphas = Config.CP_ALPHA
+    for alpha in alphas:
+        cov = results[str(alpha)]["coverage"]
+        coverage.append(cov)
+        ace += abs(cov - (1-alpha))
+    ace /= len(alphas)
+    confidence_values = [1 - alpha for alpha in alphas]
+    
+    plt.figure(figsize=(10, 6))
+    
+    # Plot perfect calibration line
+    plt.plot([0, 1], [0, 1], 'r--', label='Perfect calibration', alpha=0.5)
+    
+    # Plot confidence vs coverage
+    plt.plot(confidence_values, coverage, 'b-', label='Model calibration')
+    plt.scatter(confidence_values, coverage, c='blue')
+    
+    # Customize plot
+    plt.grid(True, alpha=0.3)
+    plt.title(f'Confidence vs Empirical Coverage ({dataset_type})')
+    plt.xlabel('Confidence Level')
+    plt.ylabel('Empirical Coverage')
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    
+    # Add legend
+    plt.legend(loc='lower right')
+    
+    # Add annotation for ACE
+    plt.text(0.05, 0.95, f'ACE: {ace:.3f}', transform=plt.gca().transAxes, 
+             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+    
+    # Save or show plot
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f'confidence_vs_coverage_{dataset_type}.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Plot saved to: {output_path}")
+    else:
+        plt.show()
+ 
+
+def plot_coverage_vs_prediction_set_size(results, dataset_type, output_dir=None):
+    """
+    Plots coverage vs prediction set size for each alpha.
+    
+    Args:
+        results (dict): Dictionary containing conformal prediction results.
+        dataset_type (str): Dataset type.
+        alphas (list): A list of confidence levels to evaluate.
+        output_dir (str, optional): Directory to save the plot.
+    """
+    alphas = Config.CP_ALPHA
+    plt.figure(figsize=(8, 6))
+    for alpha in alphas:
+        sizes = []
+        coverage = []
+        for pred_set in results["prediction_sets"]:
+            sizes.append(len(pred_set))
+            correct_count = 0
+            for label in results["true_values"]:
+                if label in pred_set:
+                    correct_count += 1
+            coverage.append(correct_count / len(results["true_values"]))
+        plt.plot(sorted(sizes), sorted(coverage), label=f'Alpha = {alpha}')
+    plt.xlabel('Prediction Set Size')
+    plt.ylabel('Empirical Coverage')
+    plt.title(f'Coverage vs Prediction Set Size ({dataset_type})')
+    plt.legend()
+    
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f'coverage_vs_size_{dataset_type}.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Plot saved to: {output_path}")
+    else:
+        plt.show()
+def calibration_anlaysis(results, ds_type, output_dir=None):
+    cp_results = None 
+    if ds_type in Config.TASK_TYPES["ordinal_classification"]:
+        calibration_metrics = classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir =output_dir)
+        cp_results =  cp_diagrams(results, ds_type, output_dir)
+    elif ds_type in Config.TASK_TYPES["regression"]:
+        calibration_metrics = regression_calibration_diagram(results, ds_type,  output_dir =output_dir)
+    return calibration_metrics, cp_results

@@ -1,0 +1,10 @@
+{
+  "0.1": {
+    "accuracy": 0.45907473309608543,
+    "micro_f1": 0.45907473309608543,
+    "macro_f1": 0.41872222621105487,
+    "macro_average": null,
+    "per_emotion_pearson": null,
+    "average_pearson": 0.8332084610383788
+  }
+}

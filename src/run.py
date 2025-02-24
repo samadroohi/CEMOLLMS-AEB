@@ -96,7 +96,7 @@ def run_inference():
                     probs = get_probs(generated_tokens, logits_generated_tokens, tokenizer, Config.DS_TYPE)
                     # Convert tensor probabilities to Python floats
                     if probs is not None:
-                        probs = [float(p.cpu()) for p in probs]
+                        probs = [float(p) for p in probs]
                 else:
                     probs = None
             
@@ -166,9 +166,9 @@ def run_conformal_prediction(dataset_type):
 
 if __name__ == "__main__":
     #1: Get model responses
-    run_inference()
+    #run_inference()
     #2: Get conformal prediction results
     #dataset_type = Config.DS_TYPE
     #run_conformal_prediction(dataset_type)
     #3: Analyze results
-    #run_analysis()
+    run_analysis()

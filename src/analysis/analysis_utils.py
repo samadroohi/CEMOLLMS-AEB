@@ -137,16 +137,42 @@ def analyze_ordinal_classification_results(results, ds_type, task_types):
             macro_f1 = metrics.f1_score(all_true, all_pred, average='macro')
             # Calculate macro-average (average of per-emotion Pearson correlations)
             macro_average = np.mean(list(emotion_pearson.values()))
-            
+            average_pearson, _ = stats.pearsonr(all_true, all_pred)
+
             metrics_dict = {
                 'accuracy': float(accuracy),
                 'micro_f1': float(micro_f1),
                 'macro_f1': float(macro_f1),
                 'macro_average': float(macro_average),
-                'per_emotion_pearson': emotion_pearson
+                'per_emotion_pearson': emotion_pearson,
+                'average_pearson':average_pearson
             }
-        
-            return metrics_dict
+        elif ds_type == "V-oc":
+            # Convert predictions and true values to numeric values
+            true_values = np.array([x[1] for x in results["true_values"]], dtype=np.int32)
+            predictions = np.array([x[1] for x in results["predictions"]], dtype=np.int32)
+            
+            # Map class indices to actual values: [3,2,1,0,-1,-2,-3]
+            value_mapping = {0: 3, 1: 2, 2: 1, 3: 0, 4: -1, 5: -2, 6: -3}
+            true_values = np.array([value_mapping[x] for x in true_values])
+            predictions = np.array([value_mapping[x] for x in predictions])
+            
+            # Calculate metrics
+            pearson_corr, p_value = stats.pearsonr(true_values, predictions)
+            accuracy = metrics.accuracy_score(true_values, predictions)
+            micro_f1 = metrics.f1_score(true_values, predictions, average='micro')
+            macro_f1 = metrics.f1_score(true_values, predictions, average='macro')
+            
+            metrics_dict = {
+                'accuracy': float(accuracy),
+                'micro_f1': float(micro_f1),
+                'macro_f1': float(macro_f1),
+                'macro_average': None,  # Not applicable for V-oc since there's only one dimension
+                'per_emotion_pearson': None,  # Not applicable for V-oc
+                'average_pearson': float(pearson_corr)  # This is our main correlation metric for V-oc
+            }
+            
+        return metrics_dict
             
     except Exception as e:
         print(f"Debug info:")

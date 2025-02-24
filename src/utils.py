@@ -116,9 +116,11 @@ def cleaning_results_ordinal_classification(results, ds_type):
             if not isinstance(result, dict) or "prediction" not in result:
                 stats["invalid_predictions"] += 1
                 continue
-            
+                
             # Extract the numeric part from the prediction and check if it's in valid classes
             prediction = result["prediction"].strip().split(":")[0].strip()
+            
+
             if prediction in valid_classes:
                 stats["valid_predictions"] += 1
                 valid_results.append(result)
@@ -129,8 +131,8 @@ def cleaning_results_ordinal_classification(results, ds_type):
             stats["invalid_predictions"] += 1
     
     # Save statistics
-    os.makedirs('results/statistics', exist_ok=True)
-    stats_file = f'results/statistics/{model_info}.json'
+    os.makedirs(f'results/statistics/{ds_type}', exist_ok=True)
+    stats_file = f'results/statistics/{ds_type}/{model_info}.json'
     with open(stats_file, 'w') as f:
         json.dump(stats, f, indent=2)
     
@@ -225,7 +227,8 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
             answer = tokenizer.decode(token, skip_special_tokens=True)
             if answer in  Config.VALID_D_TYPES[ds_type].keys():
                 encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].keys()]
-                probs = [logits[i][token[1]] for token in encoded_classes]
+                probs = [float(torch.softmax(logits[i], dim=0)[token[1]]) for token in encoded_classes]
+                
                 return probs
     elif ds_type == "V-oc":
         # Handle values: 3,2,1,0,-1,-2,-3
@@ -328,5 +331,13 @@ def get_prediction_touples(predictions, dataset_type):
                 
             except (ValueError, AttributeError):
                 continue
-                
+    elif dataset_type == "V-oc":
+        for pred in predictions:
+            try:
+                or_index = pred.strip().split(":")[0].strip()
+                class_index = list(Config.VALID_D_TYPES[dataset_type].keys()).index(or_index)
+                result.append((None,class_index))
+            except (ValueError, AttributeError):
+                continue
+        
     return result
