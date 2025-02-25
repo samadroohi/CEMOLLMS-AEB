@@ -29,18 +29,18 @@ def run_analysis():
             
             # Generate calibration plot
             output_dir = Config.PLOTS_DIR
-            calibration_metrics, _ = calibration_anlaysis(
+            calibration_metrics, cp_metrics = calibration_anlaysis(
                 results,
                 Config.DS_TYPE,
                 output_dir=output_dir
             )
             
             print("\nCalibration Plot Results:")
-            print(f"Coverage: {calibration_metrics['coverage']:.3f}")
-            print(f"Average Interval Size: {calibration_metrics['avg_interval_size']:.3f}")
-            print(f"Points within interval: {calibration_metrics['in_interval_count']}/{plot_metrics['total_points']}")
-            
-            all_metrics = calibration_metrics
+ 
+
+            print ("calibration metrics: ", calibration_metrics)
+            print ("cp_metrics: ", cp_metrics)
+
         elif Config.DS_TYPE in Config.TASK_TYPES["classification"]:
             print("\nClassification Analysis Results:")
             # TODO: Add classification metrics display
@@ -65,22 +65,27 @@ def run_analysis():
             output_dir=output_dir)
 
             print("\nCalibration Plot Results:")
-            print(f"Accuracy:{calibration_metrics["accuracy"]}")
-            print(f"ECE:{calibration_metrics["ece"]}")
-            print(f"MCE:{calibration_metrics["mce"]}")
-            print(f"Brier Score:{calibration_metrics["brier_score"]}")
-            print(f"Alpha: {cp_metrics['alpha']} Coverage:{cp_metrics['coverage']} Prediction Set Size:{cp_metrics['psize']}")
-            all_metrics = calibration_metrics + cp_metrics   
+            print(f"Accuracy: {calibration_metrics.get('accuracy', 'N/A')}")
+            print(f"ECE: {calibration_metrics.get('ece', 'N/A')}")
+            print(f"MCalE: {calibration_metrics.get('mcale', 'N/A')}")
+            print(f"Brier Score: {calibration_metrics.get('brier_score', 'N/A')}")
+            print(f"Alpha: {cp_metrics['alpha']} Coverage: {cp_metrics['coverage']} Prediction Set Size: {cp_metrics['psize']}, ACE: {cp_metrics['ace']}, MCE: {cp_metrics['mcove']}")
+            # Option 1: Using update() method
+            
+
         elif Config.DS_TYPE in Config.TASK_TYPES["multiclass_classification"]:
             print("\nMulticlass Classification Analysis Results:")
             # TODO: Add multiclass classification metrics display
             pass
         
         # Save combined metrics for all alpha values
+        
+        merged_metrics = calibration_metrics.copy()
+        merged_metrics.update(cp_metrics)
         metrics_file = os.path.join(Config.PLOTS_DIR, 'combined_metrics.json')
         os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
         with open(metrics_file, 'w') as f:
-            json.dump(all_metrics, f, indent=2)
+            json.dump(merged_metrics, f, indent=2)
         print(f"\nCombined metrics saved to: {metrics_file}")
             
     except FileNotFoundError as e:

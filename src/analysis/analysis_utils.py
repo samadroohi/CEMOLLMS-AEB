@@ -147,15 +147,19 @@ def analyze_ordinal_classification_results(results, ds_type, task_types):
                 'per_emotion_pearson': emotion_pearson,
                 'average_pearson':average_pearson
             }
-        elif ds_type == "V-oc":
+        elif ds_type == "V-oc" or ds_type == "SST5" or ds_type == "TDT":
             # Convert predictions and true values to numeric values
             true_values = np.array([x[1] for x in results["true_values"]], dtype=np.int32)
             predictions = np.array([x[1] for x in results["predictions"]], dtype=np.int32)
-            
-            # Map class indices to actual values: [3,2,1,0,-1,-2,-3]
-            value_mapping = {0: 3, 1: 2, 2: 1, 3: 0, 4: -1, 5: -2, 6: -3}
-            true_values = np.array([value_mapping[x] for x in true_values])
-            predictions = np.array([value_mapping[x] for x in predictions])
+            if ds_type == "V-oc":
+                # Map class indices to actual values: [3,2,1,0,-1,-2,-3]
+                value_mapping = {0: 3, 1: 2, 2: 1, 3: 0, 4: -1, 5: -2, 6: -3}
+                true_values = np.array([value_mapping[x] for x in true_values])
+                predictions = np.array([value_mapping[x] for x in predictions])
+            elif ds_type == "TDT":
+                value_mapping = {0:1, 1:0, 2:-1} 
+                true_values = np.array([value_mapping[x] for x in true_values])
+                predictions = np.array([value_mapping[x] for x in predictions])
             
             # Calculate metrics
             pearson_corr, p_value = stats.pearsonr(true_values, predictions)

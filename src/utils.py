@@ -7,6 +7,7 @@ import json
 import os
 import numpy as np
 import torch
+import re
 
 def compute_probs(ds_type, token_logits):
     if ds_type in Config.CLASSIFICATION_DS_TYPES:
@@ -62,9 +63,23 @@ def cleaning_results_regression(results, ds_type):
                 
             # Try to convert prediction to float and validate range
             try:
-                pred = float(result["prediction"])
+                # Handle both direct float values and strings with numbers followed by text
+                if isinstance(result["prediction"], (int, float)):
+                    pred = float(result["prediction"])
+                else:
+                    # Extract the number from the beginning of the string
+                    prediction_str = str(result["prediction"]).strip()
+                    # Use a regex to extract the first number (integer or decimal)
+                    match = re.match(r'^(-?\d+(\.\d+)?)', prediction_str)
+                    if match:
+                        pred = float(match.group(1))
+                    else:
+                        stats["invalid_predictions"] += 1
+                        continue
+                
                 if pred >= valid_range["min"] and pred <= valid_range["max"]:
                     stats["valid_predictions"] += 1
+                    result["prediction"] = pred
                     valid_results.append(result)
                 else:
                     stats["invalid_predictions"] += 1
@@ -75,8 +90,8 @@ def cleaning_results_regression(results, ds_type):
             stats["invalid_predictions"] += 1
     
     # Save statistics
-    os.makedirs('results/statistics', exist_ok=True)
-    stats_file = f'results/statistics/{model_info}.json'
+    os.makedirs(f'results/statistics/{ds_type}', exist_ok=True)
+    stats_file = f'results/statistics/{ds_type}/{model_info}.json'
     with open(stats_file, 'w') as f:
         json.dump(stats, f, indent=2)
     
@@ -221,13 +236,13 @@ def save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, 
 
 
 def get_probs(generated_tokens, logits, tokenizer, ds_type):
-    if ds_type =="EI-oc":
+    if ds_type =="EI-oc" or ds_type == "SST5" or ds_type == "TDT":
         #0,1,2,3
         for i, token in enumerate(generated_tokens):
             answer = tokenizer.decode(token, skip_special_tokens=True)
             if answer in  Config.VALID_D_TYPES[ds_type].keys():
                 encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].keys()]
-                probs = [float(torch.softmax(logits[i], dim=0)[token[1]]) for token in encoded_classes]
+                probs = [float(torch.softmax(logits[i], dim=0)[token[1] if len(token)>1 else token]) for token in encoded_classes]
                 
                 return probs
     elif ds_type == "V-oc":
@@ -302,8 +317,11 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
                 probs = positive_probs + negative_probs[::-1]
                 return probs
 
-        print(f"Invalid answer: {answer}")
-        return None
+
+    print(f"Invalid answer: {answer}")
+    return None
+    
+
 
 def get_prediction_touples(predictions, dataset_type):
     '''
@@ -331,7 +349,7 @@ def get_prediction_touples(predictions, dataset_type):
                 
             except (ValueError, AttributeError):
                 continue
-    elif dataset_type == "V-oc":
+    elif dataset_type == "V-oc" or dataset_type == "SST5" or "TDT":
         for pred in predictions:
             try:
                 or_index = pred.strip().split(":")[0].strip()

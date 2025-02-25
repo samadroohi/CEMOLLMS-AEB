@@ -93,8 +93,6 @@ def regression_calibration_diagram(results: dict,
             plt.savefig(output_path, dpi=300, bbox_inches='tight')
             plt.close()
             print(f"Plot saved to: {output_path}")
-        else:
-            plt.show()
         data ={
             'coverage': coverage,
             'avg_interval_size': avg_interval_size,
@@ -112,28 +110,18 @@ def regression_calibration_diagram(results: dict,
         raise
 
 def classification_relibaility_diagram(results: dict,
-                                     dataset_type: str,
-                                     output_dir: str = None,
-                                     title: str = None,
-                                     figsize: tuple = (10, 6),
-                                     ):
+                                        dataset_type: str,
+                                        output_dir: str = None,
+                                        title: str = None,
+                                        figsize: tuple = (10, 6),
+                                        ):
     """
     Create a reliability diagram for classification predictions.
-    
-    Args:
-        results (dict): Dictionary containing predictions, true labels, and logits
-        dataset_type (str): Dataset type
-        alpha (float): Not used in this context, kept for API consistency
-        output_dir (str, optional): Directory to save the plot
-        title (str, optional): Custom title for the plot
-        figsize (tuple, optional): Figure size (width, height)
-        debug (bool, optional): Whether to print debug information
+    (Modified to compute average bin confidence)
     """
     try:
-
         # Extract true class indices
         y_true = np.array([label[1] for label in results["true_values"]])
-        
         
         # Convert logits to probabilities and get probability for predicted class
         predictions = []
@@ -146,43 +134,46 @@ def classification_relibaility_diagram(results: dict,
         # Create figure
         plt.figure(figsize=figsize)
         
-        # Calculate reliability curve with confidence intervals
+        # Define uniform bins manually
         n_bins = 10
         bin_edges = np.linspace(0, 1, n_bins + 1)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         
         bin_accuracies = []
-        confidence_intervals = []
+        bin_confidences = []  # average predicted probability for each bin
         bin_counts = []
         
+        # Loop over bins
         for i in range(n_bins):
             mask = (predictions >= bin_edges[i]) & (predictions < bin_edges[i + 1])
             bin_count = np.sum(mask)
             
-            if bin_count >= 10:  # Only include bins with sufficient samples
-                bin_accuracy = np.mean(y_true[mask] == np.array([pred[1] for pred in results["predictions"]])[mask])
-                # Calculate confidence interval using Wilson score interval
-                z = 1.96  # 95% confidence
-                n = bin_count
-                p = bin_accuracy
-                ci = z * np.sqrt((p * (1-p) + z*z/(4*n)) / n) / (1 + z*z/n)
+            if bin_count >= 10:  # Only compute when there are sufficient samples
+                # Compute bin accuracy (fraction of correct predictions)
+                pred_labels = np.array([pred[1] for pred in results["predictions"]])
+                bin_accuracy = np.mean(y_true[mask] == pred_labels[mask])
+                # Compute average confidence of predictions in this bin
+                avg_confidence = np.mean(predictions[mask])
                 
                 bin_accuracies.append(bin_accuracy)
-                confidence_intervals.append(ci)
+                bin_confidences.append(avg_confidence)
                 bin_counts.append(bin_count)
             else:
                 bin_accuracies.append(np.nan)
-                confidence_intervals.append(np.nan)
+                bin_confidences.append(np.nan)
                 bin_counts.append(bin_count)
         
         bin_accuracies = np.array(bin_accuracies)
-        confidence_intervals = np.array(confidence_intervals)
+        bin_confidences = np.array(bin_confidences)
+        bin_counts = np.array(bin_counts)
         
         # Plot perfect calibration line
         plt.plot([0, 1], [0, 1], 'r--', label='Perfect calibration', alpha=0.5)
         
-        # Plot reliability curve with confidence intervals
+        # Only plot bins with enough data
         valid_bins = ~np.isnan(bin_accuracies)
+        # For display purposes, you might still use the bin centers:
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
         plt.plot(bin_centers[valid_bins], bin_accuracies[valid_bins], 'b-', label='Model calibration')
         plt.scatter(bin_centers[valid_bins], bin_accuracies[valid_bins], c='blue')
         
@@ -193,48 +184,43 @@ def classification_relibaility_diagram(results: dict,
         plt.title(title)
         plt.xlabel('Predicted Probability')
         plt.ylabel('Observed Frequency')
-        
-        # Set axis limits
         plt.xlim(0, 1)
         plt.ylim(0, 1)
+        plt.legend(loc='lower right')
         
-        # Add legend
-        plt.legend(loc='upper left')
-        
-        # Calculate additional metrics
-        # ECE (Expected Calibration Error)
-        valid_accuracies = bin_accuracies[valid_bins]
-        valid_centers = bin_centers[valid_bins]
-        valid_counts = np.array(bin_counts)[valid_bins]
-        total_samples = np.sum(valid_counts)
-        
-        # Calculate ECE as weighted average of |accuracy - confidence|
-        ece = np.sum(valid_counts * np.abs(valid_accuracies - valid_centers)) / total_samples
-        
-        # MCE (Maximum Calibration Error)
-        mce = np.max(np.abs(valid_accuracies - valid_centers))
-        
-        # Brier Score (mean squared error between predictions and actual outcomes)
+        # Compute ECE using the actual average predicted probabilities
+        total_samples = np.sum(bin_counts[valid_bins])
+        if total_samples > 0:
+            ece = np.sum(bin_counts[valid_bins] * np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])) / total_samples
+            
+            # Calculate Maximum Calibration Error (mcale)
+            calibration_errors = np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])
+            mcale = np.max(calibration_errors) if len(calibration_errors) > 0 else np.nan
+        else:
+            ece = np.nan
+            mcale = np.nan
+
+        # Annotate the plot with ECE in red text
+        plt.text(0.05, 0.90, f'ECE: {ece:.3f}', transform=plt.gca().transAxes, 
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        #Annotate the plot with MCE in red text
+        plt.text(0.05, 0.85, f'MCE: {mcale:.3f}', transform=plt.gca().transAxes, 
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        # Other metrics (Brier)
         y_true_one_hot = np.array([pred[1] == y_true[i] for i, pred in enumerate(results["predictions"])])
         brier_score = np.mean((predictions - y_true_one_hot) ** 2)
         
-        # Save metrics to file if output_dir is provided
-        if output_dir:
-            metrics = {
-                'accuracy': float(np.mean(y_true == np.array([pred[1] for pred in results["predictions"]]))),
-                'ece': float(ece),
-                'mce': float(mce),
-                'brier_score': float(brier_score),
-                'mean_prediction': float(np.mean(predictions))
-            }
-            metrics_path = os.path.join(output_dir, f'calibration_metrics_{dataset_type}.txt')
-            with open(metrics_path, 'w') as f:
-                for metric_name, value in metrics.items():
-                    f.write(f"{metric_name}: {value:.4f}\n")
-            print(f"Metrics saved to: {metrics_path}")
+        metrics = {
+            'accuracy': float(np.mean(y_true == np.array([pred[1] for pred in results["predictions"]])),
+            ),
+            'ece': float(ece),
+            'mcale': float(mcale),  # Added Maximum Calibration Error
+            'brier_score': float(brier_score),
+            'mean_prediction': float(np.mean(predictions))
+        }
         
         # Save or show plot
-
+        if output_dir:
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, f'reliability_plot_{dataset_type}.png')
             plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -246,7 +232,7 @@ def classification_relibaility_diagram(results: dict,
         return metrics
         
     except Exception as e:
-        print(f"Error in classification_reliability_diagram: {str(e)}")
+        print(f"Error in classification_relibaility_diagram: {str(e)}")
         print("Data types:")
         print(f"true_values type: {type(results['true_values'][0])}")
         print(f"probs type: {type(results['probs'][0])}")
@@ -256,7 +242,9 @@ def multiclass_classification_relibaility_diagram(results,dataset_type, alpha, o
     pass
 def cp_diagrams(results,dataset_type, output_dir):
     plot_confidence_vs_coverage(results, dataset_type, output_dir)
-    plot_coverage_vs_prediction_set_size(results, dataset_type, output_dir)
+    cp_results = plot_coverage_vs_prediction_set_size(results, dataset_type, output_dir)
+    return cp_results
+
 
     
 
@@ -273,11 +261,13 @@ def plot_confidence_vs_coverage(results, dataset_type, output_dir=None):
     """
     coverage = []
     ace = 0
+    mcove = 0
     alphas = Config.CP_ALPHA
     for alpha in alphas:
         cov = results[str(alpha)]["coverage"]
         coverage.append(cov)
         ace += abs(cov - (1-alpha))
+        mcove = max(mcove, abs(cov - (1-alpha)))
     ace /= len(alphas)
     confidence_values = [1 - alpha for alpha in alphas]
     
@@ -304,7 +294,8 @@ def plot_confidence_vs_coverage(results, dataset_type, output_dir=None):
     # Add annotation for ACE
     plt.text(0.05, 0.95, f'ACE: {ace:.3f}', transform=plt.gca().transAxes, 
              bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
-    
+    plt.text(0.05, 0.90, f'MCovE: {mcove:.3f}', transform=plt.gca().transAxes, 
+             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
     # Save or show plot
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -318,45 +309,102 @@ def plot_confidence_vs_coverage(results, dataset_type, output_dir=None):
 
 def plot_coverage_vs_prediction_set_size(results, dataset_type, output_dir=None):
     """
-    Plots coverage vs prediction set size for each alpha.
+    Plots prediction set size vs confidence level (1 - alpha) with circles for each point,
+    connects the points with a line, and annotates the coverage for each point.
     
     Args:
         results (dict): Dictionary containing conformal prediction results.
         dataset_type (str): Dataset type.
-        alphas (list): A list of confidence levels to evaluate.
         output_dir (str, optional): Directory to save the plot.
     """
     alphas = Config.CP_ALPHA
     plt.figure(figsize=(8, 6))
+    confidences = [1 - alpha for alpha in alphas]
+    set_sizes = []
+    coverages = []
+    cp_metrics = {}
+    mcove = 0
     for alpha in alphas:
+        result = results[str(alpha)]
         sizes = []
-        coverage = []
-        for pred_set in results["prediction_sets"]:
+        coverage = result["coverage"]
+        mcove = max(mcove, abs(coverage - (1-alpha)))
+        for pred_set in result["prediction_sets"]:
             sizes.append(len(pred_set))
-            correct_count = 0
-            for label in results["true_values"]:
-                if label in pred_set:
-                    correct_count += 1
-            coverage.append(correct_count / len(results["true_values"]))
-        plt.plot(sorted(sizes), sorted(coverage), label=f'Alpha = {alpha}')
-    plt.xlabel('Prediction Set Size')
-    plt.ylabel('Empirical Coverage')
-    plt.title(f'Coverage vs Prediction Set Size ({dataset_type})')
-    plt.legend()
+        avg_size = np.mean(sizes)
+        set_sizes.append(avg_size)
+        coverages.append(coverage)
+        plt.scatter(1 - alpha, avg_size, c='b', marker='o')
+        plt.annotate(f"{coverage:.2f}", (1 - alpha, avg_size), xytext=(5, 5), textcoords="offset points")
+    ace = np.mean(np.abs(np.array(coverages) - np.array(confidences)))
+    plt.plot(confidences, set_sizes, 'b-')
+
+    plt.xlabel('Confidence Level (1 - alpha)')
+    plt.ylabel('Prediction Set Size')
+    plt.title(f'Prediction Set Size vs Confidence Level ({dataset_type})')
+    plt.grid(True, alpha=0.3)
     
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f'coverage_vs_size_{dataset_type}.png')
+        output_path = os.path.join(output_dir, f'size_vs_confidence_{dataset_type}.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Plot saved to: {output_path}")
     else:
         plt.show()
+    cp_metrics = {
+        'alpha': alphas,
+        'coverage': coverages,
+        'psize': set_sizes,
+        'ace': ace,
+        'mcove': mcove
+    }
+    return cp_metrics
+        
+
+
+    
+    return metrics
+def compute_regression_metrics(y_true, y_pred, model=None, X=None):
+    """
+    Compute standard regression metrics including uncertainty estimates.
+    
+    Args:
+        y_true: Array-like of true values
+        y_pred: Array-like of predicted values
+        model: Trained model (optional) - used to estimate prediction uncertainty
+        X: Feature data corresponding to y_true (optional) - needed for uncertainty estimation
+        
+    Returns:
+        dict: Dictionary containing regression metrics
+    """
+    # Convert inputs to numpy arrays
+    y_true = np.array(y_true, dtype=np.float64)
+    y_pred = np.array(y_pred, dtype=np.float64)
+    
+    # Calculate residuals
+    residuals = y_true - y_pred
+    
+    # Calculate basic metrics
+    metrics = {
+        'mse': np.mean(residuals**2),
+        'rmse': np.sqrt(np.mean(residuals**2)),
+        'mae': np.mean(np.abs(residuals))
+    }
+
+    return metrics
 def calibration_anlaysis(results, ds_type, output_dir=None):
-    cp_results = None 
+
     if ds_type in Config.TASK_TYPES["ordinal_classification"]:
         calibration_metrics = classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir =output_dir)
-        cp_results =  cp_diagrams(results, ds_type, output_dir)
+        cp_metrics =  cp_diagrams(results, ds_type, output_dir)
     elif ds_type in Config.TASK_TYPES["regression"]:
-        calibration_metrics = regression_calibration_diagram(results, ds_type,  output_dir =output_dir)
-    return calibration_metrics, cp_results
+        cp_metrics = {'confidences':[],  'coverages': [], 'average_interval_sizes': []}
+        for alpha in Config.CP_ALPHA:
+            cp_data = regression_calibration_diagram(results[str(alpha)], ds_type, alpha, output_dir =output_dir)
+            cp_metrics['confidences'].append(1-alpha)
+            cp_metrics['coverages'].append(cp_data['coverage'])
+            cp_metrics['average_interval_sizes'].append(cp_data['avg_interval_size'])
+            
+        calibration_metrics = compute_regression_metrics(results[str(Config.CP_ALPHA[0])]["true_values"], results[str(Config.CP_ALPHA[0])]["predictions"])
+    return calibration_metrics, cp_metrics

@@ -166,9 +166,9 @@ def run_conformal_prediction(dataset_type):
 
 if __name__ == "__main__":
     #1: Get model responses
-    #run_inference()
+    run_inference()
     #2: Get conformal prediction results
-    #dataset_type = Config.DS_TYPE
-    #run_conformal_prediction(dataset_type)
+    dataset_type = Config.DS_TYPE
+    run_conformal_prediction(dataset_type)
     #3: Analyze results
     run_analysis()

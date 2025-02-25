@@ -62,7 +62,7 @@ class ConformalRegressionPredictor(BaseConformalPredictor):
         y_pred = np.array(y_pred, dtype=float)
         
         # Get both bounds from predict
-        lower, upper = self.predict(y_pred, quantiles)
+        lower, upper = self.predict(y_pred,None, quantiles)
         
         # Check coverage
         coverage = np.mean((y_true >= lower) & (y_true <= upper))
