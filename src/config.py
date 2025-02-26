@@ -11,12 +11,12 @@ class Config:
         "classification": [],
         "ordinal_classification": ["EI-oc", "TDT","V-oc", "SST5"],
         "regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank","SST"],
-        "multiclass_classification": [ "GoEmotion", "E-c"]
+        "multiclass_classification": [ "GoEmotions", "E-c"]
     }
     VERBOSE = False  # Set to True if you want detailed output
     CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     #******************************
-    DS_TYPE = "V-reg" #*******************
+    DS_TYPE = "E-c" #*******************
     #******************************
     CALIBRATION_RATE = 0.1
     # Generation settings
@@ -68,8 +68,24 @@ class Config:
                 "4": "4: very positive"},
         "TDT":{"1": "1: positive" ,
                 "0": "0: neutral", 
-                "-1": "-1: negative"}
-        }
+                "-1": "-1: negative"},
+        "GoEmotions": {"0":"neutral",
+                        "1":"anger",
+                        "2":"disgust",
+                        "3":"fear",
+                        "4":"joy",
+                        "5":"sadness",
+                        "6":"surprise"},
+        "E-c":{"0":"neutral",
+               "1":"anger",
+               "2":"anticipation",
+               "3":"disgust",
+               "4":"fear",
+               "5":"joy",
+               "6":"love",
+               "7":"optimism",
+               "8":"pessimism",}
+                    }
     #REVERSE_VALID_D_TYPES = {
      #       v: k for key, sub_dict in VALID_D_TYPES.items() if isinstance(sub_dict, dict) 
       #      for k, v in sub_dict.items()

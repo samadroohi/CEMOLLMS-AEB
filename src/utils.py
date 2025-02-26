@@ -161,7 +161,48 @@ def cleaning_results_ordinal_classification(results, ds_type):
     return valid_results
 
 def cleaning_results_multiclass_classification(results,ds_type):
-    pass
+    if ds_type == "GoEmotions":
+        # Initialize counters
+        stats = {
+            "total_predictions": len(results),
+            "valid_predictions": 0,
+            "invalid_predictions": 0
+        }
+        
+        valid_results = []
+        
+        # Get model info from the results filename
+        results_path = Config.RESULTS_FILE
+        model_info = os.path.basename(results_path).replace('.json', '')
+        
+        # Get valid classes for this dataset type
+        valid_classes = Config.VALID_D_TYPES[ds_type].values()
+        if not valid_classes:
+            raise ValueError(f"Unknown dataset type: {ds_type}")
+        
+        for result in results:
+            for each_class in result["prediction"]:
+                if each_class not in valid_classes:
+                    stats["invalid_predictions"] += 1
+                    break
+            stats["valid_predictions"] += 1
+            valid_results.append(result)
+    elif ds_type == "E-c":
+        pass
+    
+    os.makedirs(f'results/statistics/{ds_type}', exist_ok=True)
+    stats_file = f'results/statistics/{ds_type}/{model_info}.json'
+    with open(stats_file, 'w') as f:
+        json.dump(stats, f, indent=2)
+    
+    # Print summary
+    print(f"\nPrediction Statistics for {model_info}:")
+    print(f"Total predictions: {stats['total_predictions']}")
+    print(f"Valid predictions: {stats['valid_predictions']}")
+    print(f"Invalid predictions: {stats['invalid_predictions']}")
+    print(f"Statistics saved to: {stats_file}")
+    
+    return valid_results
 
 def cleaning_results_classification(results,ds_type):
     pass
@@ -234,7 +275,25 @@ def save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, 
     except Exception as e:
         print(f"Error saving results: {e}")
 
+def get_response_multiclass(generated_tokens, logits, tokenizer, ds_type):
+    if ds_type == "GoEmotions" or ds_type == "E-c":
+        responses = []
+        for i, token in enumerate(generated_tokens):    
+            answer = tokenizer.decode(token, skip_special_tokens=True).lower().strip()
+            if answer == ",":
+                continue
+            elif answer == ".":
+                break
+            for value in Config.VALID_D_TYPES[ds_type].values():
+                if value.startswith(answer):
+                    responses.append(value)
+                    break
 
+        return responses
+
+    else:
+        raise ValueError(f"Unknown dataset type: {ds_type}")
+    
 def get_probs(generated_tokens, logits, tokenizer, ds_type):
     if ds_type =="EI-oc" or ds_type == "SST5" or ds_type == "TDT":
         #0,1,2,3
@@ -316,10 +375,59 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
                 # Combine probabilities in order [3,2,1,0,-1,-2,-3]
                 probs = positive_probs + negative_probs[::-1]
                 return probs
-
-
-    print(f"Invalid answer: {answer}")
-    return None
+    elif ds_type == "GoEmotions" or ds_type == "E-c":
+        encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].values()]
+        probs = []
+        for i, token in enumerate(generated_tokens):
+            answer = tokenizer.decode(token, skip_special_tokens=True).lower().strip()
+            if answer == ".":
+                break
+                
+            # Check if this token is the first token of any class
+            is_class_token = False
+            for valid_tok in encoded_classes:
+                first_token = valid_tok[0] if isinstance(valid_tok, list) and len(valid_tok) > 0 else valid_tok
+                if token == first_token:
+                    is_class_token = True
+                    break
+                    
+            if is_class_token:
+                print(f"Generated token: '{answer}' (ID: {token})")
+            
+                # Get logits for each class (using first token of each class)
+                classes_logits = []
+                for token_list in encoded_classes:
+                    # Extract the first token from each class encoding
+                    class_token_id = token_list[0] if isinstance(token_list, list) and len(token_list) > 0 else token_list
+                    class_logit = logits[i][class_token_id].item()
+                    classes_logits.append(class_logit)
+                
+                softmax_distribution = torch.softmax(logits[i], dim=0)
+                
+                # Print diagnostics for debugging
+                current_token_id = token
+                current_logit = logits[i][current_token_id].item()
+                current_prob = softmax_distribution[current_token_id].item()
+                print(f"Current token logit: {current_logit:.4f}, probability: {current_prob:.6f}")
+                
+                # Print logits for each class
+                for j, (enc, lg) in enumerate(zip(encoded_classes, classes_logits)):
+                    class_name = tokenizer.decode(enc)
+                    print(f"Class {j}: {class_name} logit: {lg:.4f}")
+                
+                # Compute normalized probabilities (softmax over just our classes)
+                class_probs_normalized = [float(prob) for prob in torch.softmax(torch.tensor(classes_logits), dim=0).tolist()]
+                print(f"Normalized probabilities (softmax over our classes):")
+                for j, (enc, prob) in enumerate(zip(encoded_classes, class_probs_normalized)):
+                    class_name = tokenizer.decode(enc)
+                    print(f"Class {j}: {class_name} prob: {prob:.6f}")
+                
+                probs.append(class_probs_normalized)
+                
+        return probs
+    else:
+        print(f"Invalid answer: {answer}")
+        return None
     
 
 
@@ -349,7 +457,7 @@ def get_prediction_touples(predictions, dataset_type):
                 
             except (ValueError, AttributeError):
                 continue
-    elif dataset_type == "V-oc" or dataset_type == "SST5" or "TDT":
+    elif dataset_type == "V-oc" or dataset_type == "SST5" or dataset_type =="TDT":
         for pred in predictions:
             try:
                 or_index = pred.strip().split(":")[0].strip()
@@ -357,5 +465,16 @@ def get_prediction_touples(predictions, dataset_type):
                 result.append((None,class_index))
             except (ValueError, AttributeError):
                 continue
-        
+    elif dataset_type == "GoEmotions" or dataset_type == "E-c":
+        for pred in predictions:
+            if isinstance(pred, str):
+                try:
+                    list_pred = pred.strip().split(",")
+                except (ValueError, AttributeError):
+                    continue
+            elif isinstance(pred, list):
+                list_pred = pred
+            else:
+                raise ValueError(f"Unknown prediction type: {type(pred)}")
+            result.append(list_pred)
     return result

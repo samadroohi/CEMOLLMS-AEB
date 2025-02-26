@@ -68,6 +68,7 @@ def run_inference():
     progress_bar = tqdm(total=len(instruction_list), desc="Generating responses")
     with open(Config.RESULTS_FILE, 'w', encoding="utf-8") as write_f:
         for i in range(0, len(instruction_list), Config.BATCH_SIZE):
+            
             batch_data = instruction_list[i: min(i + Config.BATCH_SIZE, len(instruction_list))]
             batch_true_values = true_values[i: min(i + Config.BATCH_SIZE, len(true_values))]
             batch_ds_type = ds_type[i: min(i + Config.BATCH_SIZE, len(ds_type))]
@@ -89,6 +90,7 @@ def run_inference():
             num_generated = len(logits)  # Number of generated tokens
             
             for j in range(sequences.shape[0]):  # Loop through each item in batch
+                response = None
                 generated_tokens = sequences[j, -num_generated:]  # Get just the new tokens
                 logits_generated_tokens = [logits[step][j] for step in range(num_generated)]  # Get full logits for each generated token
                 #shape of logits_generated_tokens is (num_generated, vocab_size)
@@ -97,17 +99,20 @@ def run_inference():
                     # Convert tensor probabilities to Python floats
                     if probs is not None:
                         probs = [float(p) for p in probs]
+                elif Config.DS_TYPE in Config.TASK_TYPES["multiclass_classification"]:
+                    probs = get_probs(generated_tokens, logits_generated_tokens, tokenizer, Config.DS_TYPE)
+                    response = get_response_multiclass(generated_tokens, logits_generated_tokens, tokenizer, Config.DS_TYPE)
                 else:
                     probs = None
-            
-                answer = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                if response is None:
+                    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)    
                 data_one = {
-                    "ds_type": batch_ds_type[j],
-                    "input": batch_data[j],
-                    "true_value": batch_true_values[j],
-                    "prediction": answer,
-                    "probs": probs,
-                }
+                "ds_type": batch_ds_type[j],
+                "input": batch_data[j],
+                "true_value": batch_true_values[j],
+                "prediction": response,
+                "probs": probs,
+            }
                 if j == 0:
                     print(f"batch:{i} data: {data_one}")
                     print(f"*"*50)
@@ -118,7 +123,7 @@ def run_inference():
                     print(f"Input type: {batch_ds_type[j]}")
                     print(f"True value: {batch_true_values[j]}")
                     print(f"Generated response {i+j+1}/{len(instruction_list)}:")
-                    print(f"Response: {answer}")
+                    print(f"Response: {response}")
                     print("Generated tokens and their logits:")
                     
                     for token, logit in zip([tokenizer.decode(t) for t in generated_tokens], logits_generated_tokens):
@@ -153,7 +158,10 @@ def run_conformal_prediction(dataset_type):
         #true_calibration = [int(prediction.strip().split(":")[0].strip()) for prediction in true_calibration]
         true_test = get_prediction_touples(true_test, dataset_type)
         pred_test = get_prediction_touples(pred_test,dataset_type)
-
+    
+    elif dataset_type in Config.TASK_TYPES['multiclass_classification']:
+        true_test = get_prediction_touples(true_test, dataset_type)
+        true_calibration = get_prediction_touples(true_calibration,dataset_type)
 
     #compute conformal prediction
     baseline_cp = get_predictor(dataset_type)
@@ -168,7 +176,7 @@ if __name__ == "__main__":
     #1: Get model responses
     run_inference()
     #2: Get conformal prediction results
-    dataset_type = Config.DS_TYPE
-    run_conformal_prediction(dataset_type)
+    #dataset_type = Config.DS_TYPE
+    #run_conformal_prediction(dataset_type)
     #3: Analyze results
-    run_analysis()
+    #run_analysis()
