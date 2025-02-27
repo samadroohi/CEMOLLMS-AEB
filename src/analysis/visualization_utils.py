@@ -238,8 +238,174 @@ def classification_relibaility_diagram(results: dict,
         print(f"probs type: {type(results['probs'][0])}")
         raise
 
-def multiclass_classification_relibaility_diagram(results,dataset_type, alpha, output_dir):
-    pass
+def multiclass_classification_relibaility_diagram(results: dict,
+                                      dataset_type: str,
+                                      output_dir: str = None,
+                                      title: str = None,
+                                      figsize: tuple = (10, 6)):
+    """
+    Create a reliability diagram for multilabel classification using Jaccard similarity.
+    
+    Args:
+        results (dict): Dictionary containing prediction results
+        dataset_type (str): Type of dataset (e.g., 'E-c')
+        output_dir (str, optional): Directory to save the plot
+        title (str, optional): Custom title for the plot
+        figsize (tuple, optional): Figure size (width, height)
+    """
+    try:
+        # Extract true values and predicted probabilities
+        true_values = results["true_values"]
+        probs = results["probs"]
+        
+        # Number of bins for the reliability diagram
+        n_bins = 10
+        
+        # Lists to store confidence and accuracy
+        confidences = []
+        jaccard_scores = []
+        
+        # For each example
+        for i in range(len(true_values)):
+            true_set = set(true_values[i])
+            
+            # Get predicted probabilities and create predictions
+            instance_probs = probs[i]
+            predicted_labels = []
+            avg_confidence = 0
+            
+            # For each instance in the example, get prediction with highest prob
+            for label_probs in instance_probs:
+                if len(label_probs) > 0:  # Ensure we have probabilities
+                    class_idx = np.argmax(label_probs)
+                    prob = label_probs[class_idx]
+                    avg_confidence += prob
+                    
+                    # Map index to emotion label
+                    emotion_labels = ["anger", "disgust", "fear", "joy", "love", 
+                                    "optimism", "pessimism", "sadness", "surprise", 
+                                    "trust", "neutralornoemotion", "anticipation"]
+                    predicted_labels.append(emotion_labels[class_idx])
+            
+            if len(instance_probs) > 0:
+                avg_confidence /= len(instance_probs)
+                
+            predicted_set = set(predicted_labels)
+            
+            # Calculate Jaccard similarity
+            if len(true_set) == 0 and len(predicted_set) == 0:
+                jaccard = 1.0
+            elif len(true_set) == 0 or len(predicted_set) == 0:
+                jaccard = 0.0
+            else:
+                jaccard = len(true_set.intersection(predicted_set)) / len(true_set.union(predicted_set))
+                
+            confidences.append(avg_confidence)
+            jaccard_scores.append(jaccard)
+        
+        # Create figure
+        plt.figure(figsize=figsize)
+        
+        # Define uniform bins manually
+        bin_edges = np.linspace(0, 1, n_bins + 1)
+        
+        bin_accuracies = []
+        bin_confidences = []
+        bin_counts = []
+        
+        # Loop over bins
+        for i in range(n_bins):
+            mask = (np.array(confidences) >= bin_edges[i]) & (np.array(confidences) < bin_edges[i + 1])
+            bin_count = np.sum(mask)
+            
+            if bin_count >= 10:  # Only compute when there are sufficient samples
+                # Compute bin accuracy (average Jaccard similarity)
+                bin_accuracy = np.mean(np.array(jaccard_scores)[mask])
+                # Compute average confidence of predictions in this bin
+                avg_confidence = np.mean(np.array(confidences)[mask])
+                
+                bin_accuracies.append(bin_accuracy)
+                bin_confidences.append(avg_confidence)
+                bin_counts.append(bin_count)
+            else:
+                bin_accuracies.append(np.nan)
+                bin_confidences.append(np.nan)
+                bin_counts.append(bin_count)
+        
+        bin_accuracies = np.array(bin_accuracies)
+        bin_confidences = np.array(bin_confidences)
+        bin_counts = np.array(bin_counts)
+        
+        # Plot perfect calibration line
+        plt.plot([0, 1], [0, 1], 'r--', label='Perfect calibration', alpha=0.5)
+        
+        # Only plot bins with enough data
+        valid_bins = ~np.isnan(bin_accuracies)
+        # For display purposes, you might still use the bin centers:
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        plt.plot(bin_centers[valid_bins], bin_accuracies[valid_bins], 'b-', label='Model calibration')
+        plt.scatter(bin_centers[valid_bins], bin_accuracies[valid_bins], c='blue')
+        
+        # Customize plot
+        plt.grid(True, alpha=0.3)
+        if title is None:
+            title = f'Reliability Diagram ({dataset_type})'
+        plt.title(title)
+        plt.xlabel('Mean Predicted Confidence')
+        plt.ylabel('Jaccard Similarity')
+        plt.xlim(0, 1)
+        plt.ylim(0, 1)
+        plt.legend(loc='lower right')
+        
+        # Compute ECE using the actual average predicted probabilities
+        total_samples = np.sum(bin_counts[valid_bins])
+        if total_samples > 0:
+            ece = np.sum(bin_counts[valid_bins] * np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])) / total_samples
+            
+            # Calculate Maximum Calibration Error (mcale)
+            calibration_errors = np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])
+            mcale = np.max(calibration_errors) if len(calibration_errors) > 0 else np.nan
+        else:
+            ece = np.nan
+            mcale = np.nan
+
+        # Annotate the plot with ECE in red text
+        plt.text(0.05, 0.90, f'ECE: {ece:.3f}', transform=plt.gca().transAxes, 
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        # Annotate the plot with MCE in red text
+        plt.text(0.05, 0.85, f'MCE: {mcale:.3f}', transform=plt.gca().transAxes, 
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        
+        # Calculate average Jaccard similarity
+        avg_jaccard = np.mean(jaccard_scores)
+        
+        metrics = {
+            'jaccard_similarity': float(avg_jaccard),
+            'ece': float(ece),
+            'mcale': float(mcale),
+            'mean_confidence': float(np.mean(confidences))
+        }
+        
+        # Save or show plot
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, f'reliability_plot_{dataset_type}.png')
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Plot saved to: {output_path}")
+        else:
+            plt.show()
+            
+        return metrics
+        
+    except Exception as e:
+        print(f"Error in multiclass_classification_relibaility_diagram: {str(e)}")
+        print("Data types:")
+        print(f"true_values type: {type(results['true_values'][0])}")
+        print(f"probs type: {type(results['probs'][0])}")
+        raise
+
 def cp_diagrams(results,dataset_type, output_dir):
     plot_confidence_vs_coverage(results, dataset_type, output_dir)
     cp_results = plot_coverage_vs_prediction_set_size(results, dataset_type, output_dir)
@@ -407,4 +573,7 @@ def calibration_anlaysis(results, ds_type, output_dir=None):
             cp_metrics['average_interval_sizes'].append(cp_data['avg_interval_size'])
             
         calibration_metrics = compute_regression_metrics(results[str(Config.CP_ALPHA[0])]["true_values"], results[str(Config.CP_ALPHA[0])]["predictions"])
+    elif ds_type in Config.TASK_TYPES["multiclass_classification"]:
+        calibration_metrics = multiclass_classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir)
+
     return calibration_metrics, cp_metrics

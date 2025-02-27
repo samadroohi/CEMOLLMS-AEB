@@ -2,6 +2,7 @@ import numpy as np
 from scipy import stats
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import sklearn.metrics as metrics
+from sklearn.metrics import f1_score, accuracy_score, hamming_loss, precision_score, recall_score
 
 def analyze_regression_results(results, ds_type, task_types):
     """
@@ -78,7 +79,55 @@ def analyze_multiclass_results(results, ds_type, task_types):
     Returns:
         dict: Dictionary containing multiclass classification metrics
     """
-    pass
+    # Extract predictions and true values
+    y_true = results['true_values']
+    y_pred = results['predictions']
+    
+    # Calculate Jaccard index score (jacS)
+    jaccard_scores = []
+    for true, pred in zip(y_true, y_pred):
+        true_set = set(true)
+        pred_set = set(pred)
+        
+        if not true_set and not pred_set:  # Both empty
+            jaccard_scores.append(1.0)
+        elif not true_set or not pred_set:  # One empty, one not
+            jaccard_scores.append(0.0)
+        else:
+            # Jaccard index = intersection/union
+            intersection = len(true_set & pred_set)
+            union = len(true_set | pred_set)
+            jaccard_scores.append(intersection / union)
+    
+    jaccard_index = sum(jaccard_scores) / len(jaccard_scores)
+    
+    # Get unique labels from both predictions and true values
+    unique_labels = set()
+    for labels in y_true + y_pred:
+        unique_labels.update(labels)
+    unique_labels = sorted(list(unique_labels))
+    
+    # Convert to binary matrix format for F1 scores
+    def to_binary_matrix(label_sets, unique_labels):
+        matrix = np.zeros((len(label_sets), len(unique_labels)))
+        for i, label_set in enumerate(label_sets):
+            for label in label_set:
+                j = unique_labels.index(label)
+                matrix[i, j] = 1
+        return matrix
+    
+    y_true_binary = to_binary_matrix(y_true, unique_labels)
+    y_pred_binary = to_binary_matrix(y_pred, unique_labels)
+    
+    # Calculate F1 scores
+    f1_micro = f1_score(y_true_binary, y_pred_binary, average='micro')
+    f1_macro = f1_score(y_true_binary, y_pred_binary, average='macro')
+    
+    return {
+        'jaccard_index': jaccard_index,
+        'f1_micro': f1_micro,
+        'f1_macro': f1_macro
+    }
 
 def analyze_ordinal_classification_results(results, ds_type, task_types):
     """

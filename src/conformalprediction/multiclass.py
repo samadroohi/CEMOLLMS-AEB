@@ -36,11 +36,9 @@ class MulticlassConformalPredictor(BaseConformalPredictor):
 
         for label in scores:
             if len(scores[label]) > 0:
+                # sort scores
                 sorted_scores = sorted(scores[label])
-                n = len(sorted_scores)
-                index = int(np.ceil((n + 1) * (1 - alpha))) - 1
-                index = max(0, min(index, n - 1))
-                q_hat[label] = sorted_scores[index]
+                q_hat[label] = np.percentile(sorted_scores, 100 * (1 - alpha))
             else:
                 q_hat[label] = 0.5  # default threshold
 

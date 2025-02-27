@@ -19,6 +19,10 @@ def run_analysis():
 
         performance_metrics = get_performance_metrics(results[str(Config.CP_ALPHA[0])], Config.DS_TYPE, Config.TASK_TYPES)
         
+        # Initialize these variables before the if-elif blocks
+        calibration_metrics = {}
+        cp_metrics = {}
+        
         if Config.DS_TYPE in Config.TASK_TYPES["regression"]:
             print("\nRegression Analysis Results:")
             print(f"Pearson Correlation Coefficient: {performance_metrics['pearson_correlation']:.4f}")
@@ -75,18 +79,27 @@ def run_analysis():
 
         elif Config.DS_TYPE in Config.TASK_TYPES["multiclass_classification"]:
             print("\nMulticlass Classification Analysis Results:")
-            # TODO: Add multiclass classification metrics display
-            pass
+            print(f"Jaccard Index: {performance_metrics['jaccard_index']:.4f}")
+            print(f"Micro-F1: {performance_metrics['f1_micro']:.4f}")
+            print(f"Macro-F1: {performance_metrics['f1_macro']:.4f}")
+            
+            # If you want to generate calibration plots for multiclass
+            output_dir = Config.PLOTS_DIR
+            calibration_metrics, cp_metrics = calibration_anlaysis(
+                results,
+                Config.DS_TYPE,
+                output_dir=output_dir
+            )
         
-        # Save combined metrics for all alpha values
-        
-        merged_metrics = calibration_metrics.copy()
-        merged_metrics.update(cp_metrics)
-        metrics_file = os.path.join(Config.PLOTS_DIR, 'combined_metrics.json')
-        os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
-        with open(metrics_file, 'w') as f:
-            json.dump(merged_metrics, f, indent=2)
-        print(f"\nCombined metrics saved to: {metrics_file}")
+        # Only save metrics if they're not empty
+        if calibration_metrics or cp_metrics:
+            merged_metrics = calibration_metrics.copy()
+            merged_metrics.update(cp_metrics)
+            metrics_file = os.path.join(Config.PLOTS_DIR, 'combined_metrics.json')
+            os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
+            with open(metrics_file, 'w') as f:
+                json.dump(merged_metrics, f, indent=2)
+            print(f"\nCombined metrics saved to: {metrics_file}")
             
     except FileNotFoundError as e:
         print(f"Error: Could not find results file: {e}")
