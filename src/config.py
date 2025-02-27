@@ -76,16 +76,19 @@ class Config:
                         "4":"joy",
                         "5":"sadness",
                         "6":"surprise"},
-        "E-c":{"0":"neutral",
-               "1":"anger",
-               "2":"anticipation",
-               "3":"disgust",
-               "4":"fear",
-               "5":"joy",
-               "6":"love",
-               "7":"optimism",
-               "8":"pessimism",}
-                    }
+        "E-c":{"0":"neutralornoemotion",
+        "1":"anger",
+        "2":"anticipation",
+        "3": "disgust", 
+        "4":"fear", 
+        "5":"joy", 
+        "6":"love", 
+        "7":"optimism", 
+        "8":"pessimism", 
+        "9":"sadness",
+        "10":"surprise", 
+        "11":"trust"}
+        }
     #REVERSE_VALID_D_TYPES = {
      #       v: k for key, sub_dict in VALID_D_TYPES.items() if isinstance(sub_dict, dict) 
       #      for k, v in sub_dict.items()

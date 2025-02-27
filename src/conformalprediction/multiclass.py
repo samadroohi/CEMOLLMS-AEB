@@ -1,6 +1,6 @@
 import numpy as np
 from config import Config
-
+import re
 from .base import BaseConformalPredictor
 
 class MulticlassConformalPredictor(BaseConformalPredictor):
@@ -26,6 +26,10 @@ class MulticlassConformalPredictor(BaseConformalPredictor):
            probs = prob_pred_calib[i]
            if len(probs) > 0:
                 for label in labels:
+                    #remove any space or special characters
+                    label = re.sub(r'[^a-zA-Z]', '', label)
+                    #remove spaces and convert to lowercase
+                    label = label.strip().lower()
                     label_idx = next((int(key) for key, value in Config.VALID_D_TYPES[Config.DS_TYPE].items() if value == label), None)
                     if label_idx is not None:
                         scores[label.strip()].append(1-max(probs[j][label_idx] for j in range(len(probs))))

@@ -161,7 +161,7 @@ def cleaning_results_ordinal_classification(results, ds_type):
     return valid_results
 
 def cleaning_results_multiclass_classification(results,ds_type):
-    if ds_type == "GoEmotions":
+    if ds_type == "GoEmotions" or ds_type == "E-c":
         # Initialize counters
         stats = {
             "total_predictions": len(results),
@@ -182,13 +182,16 @@ def cleaning_results_multiclass_classification(results,ds_type):
         
         for result in results:
             for each_class in result["prediction"]:
+                #remove any space or special characters
+                each_class = re.sub(r'[^a-zA-Z]', '', each_class)
+                #remove spaces and convert to lowercase
+                each_class = each_class.strip().lower()
                 if each_class not in valid_classes:
                     stats["invalid_predictions"] += 1
                     break
             stats["valid_predictions"] += 1
             valid_results.append(result)
-    elif ds_type == "E-c":
-        pass
+
     
     os.makedirs(f'results/statistics/{ds_type}', exist_ok=True)
     stats_file = f'results/statistics/{ds_type}/{model_info}.json'
@@ -470,6 +473,8 @@ def get_prediction_touples(predictions, dataset_type):
             if isinstance(pred, str):
                 try:
                     list_pred = pred.strip().split(",")
+                    list_pred = [re.sub(r'[^a-zA-Z]', '', each_class) for each_class in list_pred]
+                    list_pred = [each_class.strip().lower() for each_class in list_pred]
                 except (ValueError, AttributeError):
                     continue
             elif isinstance(pred, list):
