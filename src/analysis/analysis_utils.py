@@ -228,9 +228,6 @@ def analyze_ordinal_classification_results(results, ds_type, task_types):
         return metrics_dict
             
     except Exception as e:
-        print(f"Debug info:")
-        print(f"True values sample: {results['true_values'][:5]}")
-        print(f"Predictions sample: {results['predictions'][:5]}")
         raise Exception(f"Error analyzing ordinal classification results: {str(e)}")
 
 def get_performance_metrics(results, ds_type, task_types):

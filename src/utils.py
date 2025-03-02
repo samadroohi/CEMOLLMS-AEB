@@ -395,8 +395,6 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
                     break
                     
             if is_class_token:
-                print(f"Generated token: '{answer}' (ID: {token})")
-            
                 # Get logits for each class (using first token of each class)
                 classes_logits = []
                 for token_list in encoded_classes:
@@ -411,19 +409,18 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
                 current_token_id = token
                 current_logit = logits[i][current_token_id].item()
                 current_prob = softmax_distribution[current_token_id].item()
-                print(f"Current token logit: {current_logit:.4f}, probability: {current_prob:.6f}")
+
                 
                 # Print logits for each class
                 for j, (enc, lg) in enumerate(zip(encoded_classes, classes_logits)):
                     class_name = tokenizer.decode(enc)
-                    print(f"Class {j}: {class_name} logit: {lg:.4f}")
+
                 
                 # Compute normalized probabilities (softmax over just our classes)
                 class_probs_normalized = [float(prob) for prob in torch.softmax(torch.tensor(classes_logits), dim=0).tolist()]
-                print(f"Normalized probabilities (softmax over our classes):")
+
                 for j, (enc, prob) in enumerate(zip(encoded_classes, class_probs_normalized)):
                     class_name = tokenizer.decode(enc)
-                    print(f"Class {j}: {class_name} prob: {prob:.6f}")
                 
                 probs.append(class_probs_normalized)
                 

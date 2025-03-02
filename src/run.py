@@ -11,6 +11,8 @@ from tqdm import tqdm
 from conformalprediction.regression import ConformalRegressionPredictor
 from utils import  *
 from analysis.run_analysis import run_analysis
+import gc
+
 def seed_everything(seed=23):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -47,7 +49,7 @@ def run_inference():
         model.float()
     
     model.eval()
-    print("Model loaded successfully")
+    print(f"***************Model {Config.MODEL_NAME_OR_PATH} loaded successfully***************")
     
     # Load and prepare data
     infer_data = pd.read_json(Config.INFER_FILE, lines=True)
@@ -118,22 +120,18 @@ def run_inference():
                     print(f"*"*50)
                 write_f.write(json.dumps(data_one, ensure_ascii=False) + "\n")
                 progress_bar.update(1)  # Update progress bar for each processed item
-                
-                if Config.VERBOSE:  # Add verbose flag to control detailed output
-                    print(f"Input type: {batch_ds_type[j]}")
-                    print(f"True value: {batch_true_values[j]}")
-                    print(f"Generated response {i+j+1}/{len(instruction_list)}:")
-                    print(f"Response: {response}")
-                    print("Generated tokens and their logits:")
-                    
-                    for token, logit in zip([tokenizer.decode(t) for t in generated_tokens], logits_generated_tokens):
-                        print(f"Token: '{token}', Logit: {logit:.4f}")
-                    print("-" * 50)
     
     progress_bar.close()
-def run_conformal_prediction(dataset_type):
+
+    # After processing is complete:
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+def run_conformal_prediction():
     #load results
-    
+    dataset_type = Config.DS_TYPE
     with open(Config.RESULTS_FILE, 'r', encoding="utf-8") as read_f:
         results = [json.loads(line) for line in read_f]
     #filter results using DS_TYPE
@@ -173,10 +171,46 @@ def run_conformal_prediction(dataset_type):
         save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, conformal_results, alpha)
 
 if __name__ == "__main__":
-    #1: Get model responses
-    #run_inference()
-    #2: Get conformal prediction results
-    #dataset_type = Config.DS_TYPE
-    #run_conformal_prediction(dataset_type)
-    #3: Analyze results
+    model_names = [
+        #"lzw1008/Emollama-7b",
+        #"lzw1008/Emollama-chat-7b",
+        "lzw1008/Emollama-chat-13b",
+        #"lzw1008/Emoopt-13b",
+        #"lzw1008/Emobloom-7b",
+        #"lzw1008/Emot5-large",
+        #"lzw1008/Emobart-large"
+    ]
+    dataset_names = [
+        "EI-oc", 
+        "TDT", 
+        "V-oc", 
+        "SST5", 
+        "EI-reg", 
+        "V-reg", 
+        "V-A,V-M,V-NYT,V-T", 
+        "Emobank", 
+        "SST", 
+        "GoEmotions", 
+        "E-c"
+    ]   
+    for model_name in model_names:
+        for dataset_name in dataset_names:
+            # Update the configuration with current model and dataset
+            Config.update_model_and_dataset(model_name, dataset_name)
+            
+            #1: Get model responses
+            run_inference()
+            #2: Get conformal prediction results
+            run_conformal_prediction()
+            
+            # Clear GPU cache after processing each dataset
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                print(f"GPU memory cleared after processing {dataset_name}")
+                
+            # Force Python garbage collection
+            gc.collect()
+            
+            print(f"Completed processing for {model_name} on {dataset_name}")
+            print("-" * 50)
     run_analysis()

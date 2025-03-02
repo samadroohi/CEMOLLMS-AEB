@@ -282,9 +282,7 @@ def multiclass_classification_relibaility_diagram(results: dict,
                     avg_confidence += prob
                     
                     # Map index to emotion label
-                    emotion_labels = ["anger", "disgust", "fear", "joy", "love", 
-                                    "optimism", "pessimism", "sadness", "surprise", 
-                                    "trust", "neutralornoemotion", "anticipation"]
+                    emotion_labels = list(Config.VALID_D_TYPES[dataset_type].values())
                     predicted_labels.append(emotion_labels[class_idx])
             
             if len(instance_probs) > 0:
@@ -400,11 +398,7 @@ def multiclass_classification_relibaility_diagram(results: dict,
         return metrics
         
     except Exception as e:
-        print(f"Error in multiclass_classification_relibaility_diagram: {str(e)}")
-        print("Data types:")
-        print(f"true_values type: {type(results['true_values'][0])}")
-        print(f"probs type: {type(results['probs'][0])}")
-        raise
+        raise Exception(f"Error in multiclass_classification_relibaility_diagram: {str(e)}")
 
 def cp_diagrams(results,dataset_type, output_dir):
     plot_confidence_vs_coverage(results, dataset_type, output_dir)
@@ -575,5 +569,5 @@ def calibration_anlaysis(results, ds_type, output_dir=None):
         calibration_metrics = compute_regression_metrics(results[str(Config.CP_ALPHA[0])]["true_values"], results[str(Config.CP_ALPHA[0])]["predictions"])
     elif ds_type in Config.TASK_TYPES["multiclass_classification"]:
         calibration_metrics = multiclass_classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir)
-
+        cp_metrics = cp_diagrams(results, ds_type, output_dir)
     return calibration_metrics, cp_metrics
