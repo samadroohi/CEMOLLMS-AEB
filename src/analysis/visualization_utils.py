@@ -149,8 +149,10 @@ def classification_relibaility_diagram(results: dict,
             
             if bin_count >= 10:  # Only compute when there are sufficient samples
                 # Compute bin accuracy (fraction of correct predictions)
-                pred_labels = np.array([pred[1] for pred in results["predictions"]])
-                bin_accuracy = np.mean(y_true[mask] == pred_labels[mask])
+                #pred_labels_prediction = np.array([pred[1] for pred in results["predictions"]])
+                #Compute pred using predictions softtmax values
+                pred_labels_softmax = np.argmax(results["probs"], axis=1)
+                bin_accuracy = np.mean(y_true[mask] == pred_labels_softmax[mask])
                 # Compute average confidence of predictions in this bin
                 avg_confidence = np.mean(predictions[mask])
                 
@@ -207,6 +209,7 @@ def classification_relibaility_diagram(results: dict,
         plt.text(0.05, 0.85, f'MCE: {mcale:.3f}', transform=plt.gca().transAxes, 
                  bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
         # Other metrics (Brier)
+        
         y_true_one_hot = np.array([pred[1] == y_true[i] for i, pred in enumerate(results["predictions"])])
         brier_score = np.mean((predictions - y_true_one_hot) ** 2)
         
@@ -559,10 +562,10 @@ def calibration_anlaysis(results, ds_type, output_dir=None):
         calibration_metrics = classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir =output_dir)
         cp_metrics =  cp_diagrams(results, ds_type, output_dir)
     elif ds_type in Config.TASK_TYPES["regression"]:
-        cp_metrics = {'confidences':[],  'coverages': [], 'average_interval_sizes': []}
+        cp_metrics = {'alpha':[],  'coverages': [], 'average_interval_sizes': []}
         for alpha in Config.CP_ALPHA:
             cp_data = regression_calibration_diagram(results[str(alpha)], ds_type, alpha, output_dir =output_dir)
-            cp_metrics['confidences'].append(1-alpha)
+            cp_metrics['alpha'].append(alpha)
             cp_metrics['coverages'].append(cp_data['coverage'])
             cp_metrics['average_interval_sizes'].append(cp_data['avg_interval_size'])
             

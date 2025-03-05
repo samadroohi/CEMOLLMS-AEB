@@ -300,90 +300,117 @@ def get_response_multiclass(generated_tokens, logits, tokenizer, ds_type):
 def get_probs(generated_tokens, logits, tokenizer, ds_type):
     if ds_type =="EI-oc" or ds_type == "SST5" or ds_type == "TDT":
         #0,1,2,3
+        #for token in generated_tokens:
+            #print(token, tokenizer.decode(token))
+            
         for i, token in enumerate(generated_tokens):
             answer = tokenizer.decode(token, skip_special_tokens=True)
-            if answer in  Config.VALID_D_TYPES[ds_type].keys():
-                encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].keys()]
+            # Extract just the numeric part (remove colons and other characters)
+
+            clean_answer = answer.split(':')[0].strip()
+            if clean_answer in Config.VALID_D_TYPES[ds_type].keys():
+                if Config.MODEL_NAME_OR_PATH == "lzw1008/Emobloom-7b":  
+                    #ADD : to the key
+                    encoded_classes = [tokenizer.encode(key + ":", add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].keys()]
+                else:
+                    encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].keys()]
+                #for token in encoded_classes:
+                 #   print(token, tokenizer.decode(token))
                 probs = [float(torch.softmax(logits[i], dim=0)[token[1] if len(token)>1 else token]) for token in encoded_classes]
                 
                 return probs
     elif ds_type == "V-oc":
         # Handle values: 3,2,1,0,-1,-2,-3
-        unsigned_classes = ['3','2','1','0']
-        
-        unsigned_tokens = [tokenizer.encode(str(key), add_special_tokens=False) for key in unsigned_classes]
-        minus_token = tokenizer.encode('-', add_special_tokens=False)[0]  # Get the token ID for minus
-
-        for i, token in enumerate(generated_tokens):
-            answer = tokenizer.decode(token, skip_special_tokens=True)
-            
-            if answer == '-':
-                # Case: negative number (-3,-2,-1)
-                # Get probabilities for the second token (the number after minus)
-                next_token_logits = logits[i + 1]
-                # Only 3,2,1 can follow the minus sign
-                valid_negative_nums = unsigned_tokens[:-1]  # Exclude '0'
+        if Config.MODEL_NAME_OR_PATH == "lzw1008/Emobloom-7b":
+            classes = ['3:','2:','1:','0:','-1','-2','-3']
+            for i, token in enumerate(generated_tokens):
+                answer = tokenizer.decode(token, skip_special_tokens=True)
+                cleaned_answer = answer.split(':')[0].strip()
+                if cleaned_answer in Config.VALID_D_TYPES[ds_type].keys():
+                    encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in classes]
+                    probs = [float(torch.softmax(logits[i], dim=0)[token[1] if len(token)>1 else token]) for token in encoded_classes]
+                    return probs
+        else:
+            unsigned_classes = ['3','2','1','0']
+            unsigned_tokens = [tokenizer.encode(str(key), add_special_tokens=False) for key in unsigned_classes]
+            minus_token = tokenizer.encode('-', add_special_tokens=False)[0]  # Get the token ID for minus
+            for i, token in enumerate(generated_tokens):
+                answer = tokenizer.decode(token, skip_special_tokens=True)
+                cleaned_answer = answer.split(':')[0].strip()
                 
-                # Calculate probabilities for negative numbers
-                negative_probs = []
-                for num_token in valid_negative_nums:
-                    # Probability = P(-) * P(number|-)
-                    prob = torch.softmax(logits[i], dim=0)[minus_token] * \
-                          torch.softmax(next_token_logits, dim=0)[num_token[1]]
-                    negative_probs.append(float(prob))
-                
-                # Zero probability for unused negative numbers
-                while len(negative_probs) < 3:
-                    negative_probs.append(0.0)
-                
-                # Calculate probabilities for positive numbers (including 0)
-                positive_probs = []
-                for num_token in unsigned_tokens:
-                    prob = torch.softmax(logits[i], dim=0)[num_token[1]]
-                    positive_probs.append(float(prob))
-                
-                # Combine probabilities in order [3,2,1,0,-1,-2,-3]
-                probs = positive_probs + negative_probs[::-1]  # Reverse negative probs
-                return probs
-                
-            elif answer in unsigned_classes:
-                # Case: positive number or zero
-                current_logits = logits[i]
-                
-                # Calculate probabilities for positive numbers (including 0)
-                positive_probs = []
-                for num_token in unsigned_tokens:
-                    # Direct probability of the positive number
-                    prob = torch.softmax(current_logits, dim=0)[num_token[1]]
-                    positive_probs.append(float(prob))
-                
-                # Calculate probabilities for negative numbers
-                # P(negative) = P(current_digit) * P(-|digit) * P(second_digit|-)
-                negative_probs = []
-                next_position_logits = logits[i + 1] if i + 1 < len(logits) else None
-                
-                if next_position_logits is not None:
-                    for num_token in unsigned_tokens[:-1]:  # Exclude 0 for negative numbers
-                        # Probability of seeing minus after the current digit
-                        p_minus = torch.softmax(next_position_logits, dim=0)[minus_token]
-                        # Probability of seeing the digit after minus
-                        p_digit = torch.softmax(next_position_logits, dim=0)[num_token[1]]
-                        # Joint probability
-                        prob = float(p_minus * p_digit)
-                        negative_probs.append(prob)
-                else:
-                    # If we're at the end of the sequence, negative numbers are impossible
-                    negative_probs = [0.0] * 3
-                
-                # Combine probabilities in order [3,2,1,0,-1,-2,-3]
-                probs = positive_probs + negative_probs[::-1]
-                return probs
+                if cleaned_answer == '-':
+                    # Case: negative number (-3,-2,-1)
+                    # Get probabilities for the second token (the number after minus)
+                    next_token_logits = logits[i + 1]
+                    # Only 3,2,1 can follow the minus sign
+                    valid_negative_nums = unsigned_tokens[:-1]  # Exclude '0'
+                    
+                    # Calculate probabilities for negative numbers
+                    negative_probs = []
+                    for num_token in valid_negative_nums:
+                        token_index = 1 if len(num_token) > 1 else 0
+                        # Probability = P(-) * P(number|-)
+                        prob = torch.softmax(logits[i], dim=0)[minus_token] * \
+                            torch.softmax(next_token_logits, dim=0)[num_token[token_index]]
+                        negative_probs.append(float(prob))
+                    
+                    # Zero probability for unused negative numbers
+                    while len(negative_probs) < 3:
+                        negative_probs.append(0.0)
+                    
+                    # Calculate probabilities for positive numbers (including 0)
+                    positive_probs = []
+                    for num_token in unsigned_tokens:
+                        prob = torch.softmax(logits[i], dim=0)[num_token[token_index]]
+                        positive_probs.append(float(prob))
+                    
+                    # Combine probabilities in order [3,2,1,0,-1,-2,-3]
+                    probs = positive_probs + negative_probs[::-1]  # Reverse negative probs
+                    return probs
+                    
+                elif cleaned_answer in unsigned_classes:
+                    # Case: positive number or zero
+                    current_logits = logits[i]
+                    
+                    # Calculate probabilities for positive numbers (including 0)
+                    positive_probs = []
+                    for num_token in unsigned_tokens:
+                        token_index = 1 if len(num_token) > 1 else 0
+                        # Direct probability of the positive number
+                        prob = torch.softmax(current_logits, dim=0)[num_token[token_index]]
+                        positive_probs.append(float(prob))
+                    
+                    # Calculate probabilities for negative numbers
+                    # P(negative) = P(current_digit) * P(-|digit) * P(second_digit|-)
+                    negative_probs = []
+                    next_position_logits = logits[i + 1] if i + 1 < len(logits) else None
+                    
+                    if next_position_logits is not None:
+                        for num_token in unsigned_tokens[:-1]:  # Exclude 0 for negative numbers
+                            # Probability of seeing minus after the current digit
+                            p_minus = torch.softmax(next_position_logits, dim=0)[minus_token]
+                            # Probability of seeing the digit after minus
+                            p_digit = torch.softmax(next_position_logits, dim=0)[num_token[token_index]]
+                            # Joint probability
+                            prob = float(p_minus * p_digit)
+                            negative_probs.append(prob)
+                    else:
+                        # If we're at the end of the sequence, negative numbers are impossible
+                        negative_probs = [0.0] * 3
+                    
+                    # Combine probabilities in order [3,2,1,0,-1,-2,-3]
+                    probs = positive_probs + negative_probs[::-1]
+                    return probs
     elif ds_type == "GoEmotions" or ds_type == "E-c":
         encoded_classes = [tokenizer.encode(key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].values()]
+        if Config.MODEL_NAME_OR_PATH == "lzw1008/Emobloom-7b":
+            multiclass_encoded_classes = [tokenizer.encode(" "+key, add_special_tokens=False) for key in Config.VALID_D_TYPES[ds_type].values()]
         probs = []
+        multiclass= False
         for i, token in enumerate(generated_tokens):
             answer = tokenizer.decode(token, skip_special_tokens=True).lower().strip()
-            if answer == ".":
+            cleaned_answer = answer.split(':')[0].strip()
+            if cleaned_answer == ".":
                 break
                 
             # Check if this token is the first token of any class
@@ -393,6 +420,12 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
                 if token == first_token:
                     is_class_token = True
                     break
+            if Config.MODEL_NAME_OR_PATH == "lzw1008/Emobloom-7b" and multiclass:
+                for token_list in multiclass_encoded_classes:
+                    if token == token_list[0]:
+                        is_class_token = True
+                        encoded_classes = multiclass_encoded_classes
+                        break
                     
             if is_class_token:
                 # Get logits for each class (using first token of each class)
@@ -402,81 +435,124 @@ def get_probs(generated_tokens, logits, tokenizer, ds_type):
                     class_token_id = token_list[0] if isinstance(token_list, list) and len(token_list) > 0 else token_list
                     class_logit = logits[i][class_token_id].item()
                     classes_logits.append(class_logit)
-                
-                softmax_distribution = torch.softmax(logits[i], dim=0)
-                
-                # Print diagnostics for debugging
-                current_token_id = token
-                current_logit = logits[i][current_token_id].item()
-                current_prob = softmax_distribution[current_token_id].item()
-
-                
-                # Print logits for each class
-                for j, (enc, lg) in enumerate(zip(encoded_classes, classes_logits)):
-                    class_name = tokenizer.decode(enc)
-
-                
                 # Compute normalized probabilities (softmax over just our classes)
                 class_probs_normalized = [float(prob) for prob in torch.softmax(torch.tensor(classes_logits), dim=0).tolist()]
-
-                for j, (enc, prob) in enumerate(zip(encoded_classes, class_probs_normalized)):
-                    class_name = tokenizer.decode(enc)
                 
                 probs.append(class_probs_normalized)
+                multiclass = True
                 
         return probs
     else:
-        print(f"Invalid answer: {answer}")
+        print(f"Invalid answer: {cleaned_answer}")
         return None
     
 
 
-def get_prediction_touples(predictions, dataset_type):
+def get_prediction_touples(true_values, predictions,probs, dataset_type):
     '''
-    This method generates tuple (key,class) for classification tasks e.g., ("joy", 3)
+    This method generates tuples (key,class) for classification tasks e.g., ("joy", 3)
     Input format example: "3: high amount of joy can be inferred"
+    
+    Processes both true_values and predictions in parallel, ensuring only pairs
+    where both are valid are included in the results.
+    
+    Args:
+        true_values (list): List of ground truth values
+        predictions (list): List of model predictions
+        dataset_type (str): Type of dataset being processed
+        
+    Returns:
+        tuple: (processed_true_values, processed_predictions)
     '''
-    result = []
+
+    true_result = []
+    pred_result = []
+    probs_result = []
+    
     if dataset_type == "EI-oc":
         emotion_labels = ['anger', 'fear', 'joy', 'sadness']
         
-        for pred in predictions:
+        for true, pred, prob in zip(true_values, predictions,probs):
             try:
-                # Extract the numeric class (e.g., "3" from "3: high amount of joy...")
-                class_index = int(pred.split(':')[0].strip())
-                
-                # Find which emotion is mentioned in the prediction
-                emotion = None
+                # Process true value
+                true_class_index = int(true.split(':')[0].strip())
+                true_emotion = None
                 for label in emotion_labels:
-                    if label in pred.lower():
-                        emotion = label
+                    if label in true.lower():
+                        true_emotion = label
                         break
                 
-                if emotion is not None:
-                    result.append((emotion, class_index))
+                # Process prediction
+                pred_class_index = int(pred.split(':')[0].strip())
+                pred_emotion = None
+                for label in emotion_labels:
+                    if label in pred.lower():
+                        pred_emotion = label
+                        break
+
+                
+                # Only add if both are valid
+                if true_emotion is not None and pred_emotion is not None and prob is not None:
+                    true_result.append((true_emotion, true_class_index))
+                    pred_result.append((pred_emotion, pred_class_index))
+                    probs_result.append(prob)
                 
             except (ValueError, AttributeError):
                 continue
-    elif dataset_type == "V-oc" or dataset_type == "SST5" or dataset_type =="TDT":
-        for pred in predictions:
+                
+    elif dataset_type == "V-oc" or dataset_type == "SST5" or dataset_type == "TDT":
+        for true, pred, prob in zip(true_values, predictions,probs):
             try:
-                or_index = pred.strip().split(":")[0].strip()
-                class_index = list(Config.VALID_D_TYPES[dataset_type].keys()).index(or_index)
-                result.append((None,class_index))
+                # Process true value
+                true_index = true.strip().split(":")[0].strip()
+                true_class_index = list(Config.VALID_D_TYPES[dataset_type].keys()).index(true_index)
+                
+                # Process prediction
+                pred_index = pred.strip().split(":")[0].strip()
+                pred_class_index = list(Config.VALID_D_TYPES[dataset_type].keys()).index(pred_index)
+                
+                # Add valid pairs
+                true_result.append((None, true_class_index))
+                pred_result.append((None, pred_class_index))
+                probs_result.append(prob)
+                
+            except (ValueError, AttributeError, IndexError):
+                continue
+                
+    elif dataset_type == "GoEmotions" or dataset_type == "E-c":
+        for true, pred, prob in zip(true_values, predictions,probs):
+            try:
+                # Process true value
+                if isinstance(true, str):
+                    true_list = true.strip().split(",")
+                    true_list = [re.sub(r'[^a-zA-Z]', '', each_class) for each_class in true_list]
+                    true_list = [each_class.strip().lower() for each_class in true_list]
+                elif isinstance(true, list):
+                    true_list = true
+                else:
+                    continue
+                
+                # Process prediction
+                if isinstance(pred, str):
+                    pred_list = pred.strip().split(",")
+                    pred_list = [re.sub(r'[^a-zA-Z]', '', each_class) for each_class in pred_list]
+                    pred_list = [each_class.strip().lower() for each_class in pred_list]
+                elif isinstance(pred, list):
+                    pred_list = pred
+                else:
+                    continue
+                
+                # Validate against valid classes
+                valid_classes = set(Config.VALID_D_TYPES[dataset_type].values())
+                true_list = [c for c in true_list if c in valid_classes]
+                pred_list = [c for c in pred_list if c in valid_classes]
+                
+                # Only add if both have valid classes
+                if true_list and pred_list:
+                    true_result.append(true_list)
+                    pred_result.append(pred_list)
+                    probs_result.append(prob)
             except (ValueError, AttributeError):
                 continue
-    elif dataset_type == "GoEmotions" or dataset_type == "E-c":
-        for pred in predictions:
-            if isinstance(pred, str):
-                try:
-                    list_pred = pred.strip().split(",")
-                    list_pred = [re.sub(r'[^a-zA-Z]', '', each_class) for each_class in list_pred]
-                    list_pred = [each_class.strip().lower() for each_class in list_pred]
-                except (ValueError, AttributeError):
-                    continue
-            elif isinstance(pred, list):
-                list_pred = pred
-            else:
-                raise ValueError(f"Unknown prediction type: {type(pred)}")
-            result.append(list_pred)
-    return result
+    
+    return true_result, pred_result, probs_result

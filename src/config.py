@@ -2,7 +2,7 @@ class Config:
     # Model settings
     MODEL_NAME_OR_PATH = None
     USE_LORA = False
-    USE_LLAMA = True
+    USE_LLAMA = True 
     LOAD_TYPE = "float16"  # or "float32"
     TEMPERATURES = [0.7,0.9, 1.0, 1.5, 2.0]
     # Data paths
