@@ -446,6 +446,329 @@ def generate_conformal_metrics_table(all_metrics_by_dataset, output_dir):
     
     return df
 
+def load_reliability_data(dataset, models, temp="0.9"):
+    """Load conformal prediction results for all models for a specific dataset."""
+    all_reliability_data = {}
+    
+    for model in models:
+        model_name = model.split('/')[-1]
+        reliability_path = f"results/conformal_results/{dataset}/temp_{temp}/{model_name}.json"
+        
+        if os.path.exists(reliability_path):
+            with open(reliability_path, 'r') as f:
+                reliability_data = json.load(f)
+                all_reliability_data[model_name] = reliability_data
+        else:
+            print(f"Warning: No reliability data found for {model_name} on {dataset}")
+    
+    return all_reliability_data
+
+def plot_merged_reliability_diagram(all_reliability_data, dataset, output_dir="results/integrated_analysis"):
+    """Plot merged reliability diagram for all models for a specific dataset."""
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    # Add diagonal reference line (perfect calibration)
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
+    
+    for model_name, reliability_data in all_reliability_data.items():
+        print(f"Processing {model_name} for {dataset}...")
+        
+        # Check if there are probabilities in the data
+        has_probs = False
+        probs = []
+        true_values = []
+        
+        # First, check if there's a single entry at the top level with probabilities
+        if 'probs' in reliability_data:
+            probs = reliability_data['probs']
+            true_values = reliability_data.get('true_values', [])
+            has_probs = True
+        else:
+            # Look in alpha keys for probabilities
+            alpha_keys = [k for k in reliability_data.keys() if k.replace(".", "").isdigit()]
+            
+            if alpha_keys and 'probs' in reliability_data[alpha_keys[0]]:
+                # Use probabilities from the first alpha value
+                alpha_key = alpha_keys[0]
+                probs = reliability_data[alpha_key]['probs']
+                true_values = reliability_data[alpha_key].get('true_values', [])
+                has_probs = True
+        
+        if not has_probs or not probs:
+            print(f"Warning: No probability data found for {model_name} on {dataset}")
+            continue
+        
+        # Process probabilities to create reliability diagram data
+        confidences = []
+        correctness = []
+        
+        # Debug info
+        print(f"Number of examples with probs: {len(probs)}")
+        if probs and len(probs) > 0:
+            print(f"Type of first prob: {type(probs[0])}")
+            if isinstance(probs[0], list) and len(probs[0]) > 0:
+                print(f"Type of first element in first prob: {type(probs[0][0])}")
+        
+        # For classification tasks, each "prob" is a distribution over classes
+        for i, prob_dist in enumerate(probs):
+            # Skip empty distributions
+            if not prob_dist:
+                continue
+                
+            # Check the structure of prob_dist
+            if isinstance(prob_dist, list) and len(prob_dist) > 0:
+                # Check if it's nested (multi-label case)
+                if isinstance(prob_dist[0], list):
+                    # Handle multi-label case: multiple distributions per example
+                    for j, class_probs in enumerate(prob_dist):
+                        if class_probs and len(class_probs) > 0:
+                            # Get confidence as max probability
+                            confidence = max(class_probs)
+                            pred_class = class_probs.index(max(class_probs))
+                            
+                            # Check if prediction was correct
+                            # This is a placeholder - adjust based on your data format
+                            correct = 0
+                            if i < len(true_values) and isinstance(true_values[i], list):
+                                # Assuming true_values is a list of lists for multi-label
+                                if pred_class in true_values[i]:
+                                    correct = 1
+                            
+                            confidences.append(confidence)
+                            correctness.append(correct)
+                else:
+                    # Single distribution per example
+                    confidence = max(prob_dist)
+                    pred_class = prob_dist.index(max(prob_dist))
+                    
+                    # Check if prediction was correct
+                    correct = 0
+                    if i < len(true_values):
+                        if isinstance(true_values[i], list):
+                            # Multi-label case where true values are lists of labels
+                            if pred_class in true_values[i]:
+                                correct = 1
+                        else:
+                            # Single-label case
+                            if pred_class == true_values[i]:
+                                correct = 1
+                    
+                    confidences.append(confidence)
+                    correctness.append(correct)
+            else:
+                print(f"Warning: Unexpected probability format for example {i}")
+        
+        print(f"Extracted {len(confidences)} confidence values for {model_name}")
+        
+        if not confidences:
+            print(f"Warning: Could not extract confidence values for {model_name} on {dataset}")
+            continue
+        
+        # Create bins
+        num_bins = 10
+        bin_edges = np.linspace(0, 1, num_bins + 1)
+        bin_indices = np.digitize(confidences, bin_edges) - 1
+        
+        # Calculate accuracy per bin
+        bin_confidences = []
+        bin_accuracies = []
+        
+        for bin_idx in range(num_bins):
+            bin_mask = (bin_indices == bin_idx)
+            if np.sum(bin_mask) > 0:  # Skip empty bins
+                bin_conf = np.mean(np.array(confidences)[bin_mask])
+                bin_acc = np.mean(np.array(correctness)[bin_mask])
+                
+                bin_confidences.append(bin_conf)
+                bin_accuracies.append(bin_acc)
+        
+        print(f"Created {len(bin_confidences)} bins with data for {model_name}")
+        
+        # Create DataFrame and sort by confidence
+        df = pd.DataFrame({
+            'bin_confidence': bin_confidences,
+            'bin_accuracy': bin_accuracies
+        })
+        df = df.sort_values('bin_confidence')
+        
+        # Plot reliability diagram
+        ax.scatter(df['bin_confidence'], df['bin_accuracy'], s=30, alpha=0.7)
+        ax.plot(df['bin_confidence'], df['bin_accuracy'], '-', alpha=0.7, label=model_name)
+    
+    ax.set_title(f'Reliability Diagram for {dataset}')
+    ax.set_xlabel('Confidence')
+    ax.set_ylabel('Accuracy')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+    ax.grid(True, alpha=0.3)
+    
+    # Move legend outside the plot
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    
+    # Adjust layout to make room for the legend
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
+    
+    # Create a specific folder for reliability diagrams
+    reliability_dir = os.path.join(output_dir, "reliability_diagrams")
+    os.makedirs(reliability_dir, exist_ok=True)
+    
+    # Save the plot
+    plt.savefig(f"{reliability_dir}/{dataset}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_multilabel_reliability_diagram(all_reliability_data, dataset, output_dir="results/integrated_analysis"):
+    """Plot reliability diagram specifically for multi-label datasets like E-c and GoEmotions."""
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    # Add diagonal reference line (perfect calibration)
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
+    
+    for model_name, reliability_data in all_reliability_data.items():
+        print(f"\nProcessing multi-label data for {model_name} on {dataset}...")
+        
+        # Only use alpha 0.1 since probs are the same across alpha values
+        if '0.1' not in reliability_data:
+            print(f"Warning: Alpha 0.1 not found for {model_name} on {dataset}")
+            continue
+            
+        data = reliability_data['0.1']
+        
+        if 'probs' not in data or 'true_values' not in data:
+            print(f"Warning: Missing required fields for {model_name} on {dataset}")
+            continue
+            
+        # Extract data
+        probs = data['probs']
+        true_values = data['true_values']
+        predictions = data.get('predictions', [])
+        
+        print(f"Found {len(probs)} examples with probability data")
+        print(f"Found {len(true_values)} examples with true values")
+        
+        # Print detailed information about a few examples to understand structure
+        if len(probs) > 0 and len(true_values) > 0:
+            print(f"\nExample 0:")
+            print(f"  True values: {true_values[0]}")
+            if len(probs[0]) > 0:
+                top_probs = sorted([(i, p) for i, p in enumerate(probs[0][0])], key=lambda x: x[1], reverse=True)[:3]
+                print(f"  Top 3 probs: {top_probs}")
+            if len(predictions) > 0:
+                print(f"  Prediction: {predictions[0]}")
+            
+            # Print class mapping for this dataset
+            if dataset in Config.VALID_D_TYPES:
+                print(f"\nClass mapping for {dataset}:")
+                for idx, label in Config.VALID_D_TYPES[dataset].items():
+                    print(f"  {idx}: {label}")
+        
+        # Process multi-label data
+        all_confidences = []
+        all_correctness = []
+        
+        # For multi-label classification, process each example
+        for i, example_probs in enumerate(probs):
+            if i >= len(true_values):
+                continue
+                
+            true_labels = true_values[i]
+            
+            # Check if true_labels is a list of indices or strings
+            true_label_indices = []
+            for label in true_labels:
+                if isinstance(label, str) and label.isdigit():
+                    true_label_indices.append(int(label))
+                elif isinstance(label, int):
+                    true_label_indices.append(label)
+                # If it's a string label, try to find its index
+                elif isinstance(label, str) and dataset in Config.VALID_D_TYPES:
+                    # Find index by value
+                    for idx, val in Config.VALID_D_TYPES[dataset].items():
+                        if val == label or val.endswith(label):
+                            if idx.isdigit():
+                                true_label_indices.append(int(idx))
+            
+            # Handle nested probability arrays (multiple labels per example)
+            if isinstance(example_probs, list) and len(example_probs) > 0:
+                for label_idx, class_probs in enumerate(example_probs):
+                    if not class_probs or len(class_probs) == 0:
+                        continue
+                        
+                    # Get confidence as max probability
+                    confidence = max(class_probs)
+                    pred_class_idx = class_probs.index(max(class_probs))
+                    
+                    # Check if prediction is in true labels
+                    is_correct = 0
+                    if pred_class_idx in true_label_indices:
+                        is_correct = 1
+                    
+                    all_confidences.append(confidence)
+                    all_correctness.append(is_correct)
+        
+        print(f"Extracted {len(all_confidences)} confidence values")
+        print(f"Average correctness: {np.mean(all_correctness) if all_correctness else 'N/A'}")
+        
+        if not all_confidences:
+            print(f"Warning: Could not extract confidence values for {model_name}")
+            continue
+        
+        # Create bins
+        num_bins = 10
+        bin_edges = np.linspace(0, 1, num_bins + 1)
+        bin_indices = np.digitize(all_confidences, bin_edges) - 1
+        
+        # Calculate accuracy per bin
+        bin_confidences = []
+        bin_accuracies = []
+        bin_counts = []
+        
+        for bin_idx in range(num_bins):
+            bin_mask = (bin_indices == bin_idx)
+            if np.sum(bin_mask) > 0:  # Skip empty bins
+                bin_conf = np.mean(np.array(all_confidences)[bin_mask])
+                bin_acc = np.mean(np.array(all_correctness)[bin_mask])
+                bin_count = np.sum(bin_mask)
+                
+                bin_confidences.append(bin_conf)
+                bin_accuracies.append(bin_acc)
+                bin_counts.append(bin_count)
+                
+                print(f"Bin {bin_idx}: conf={bin_conf:.2f}, acc={bin_acc:.2f}, count={bin_count}")
+        
+        print(f"Created {len(bin_confidences)} bins with data")
+        
+        # Create DataFrame and sort by confidence
+        df = pd.DataFrame({
+            'bin_confidence': bin_confidences,
+            'bin_accuracy': bin_accuracies
+        })
+        df = df.sort_values('bin_confidence')
+        
+        # Plot reliability diagram
+        ax.scatter(df['bin_confidence'], df['bin_accuracy'], s=30, alpha=0.7)
+        ax.plot(df['bin_confidence'], df['bin_accuracy'], '-', alpha=0.7, label=model_name)
+    
+    ax.set_title(f'Reliability Diagram for {dataset}')
+    ax.set_xlabel('Confidence')
+    ax.set_ylabel('Accuracy')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+    ax.grid(True, alpha=0.3)
+    
+    # Move legend outside the plot
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    
+    # Adjust layout to make room for the legend
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
+    
+    # Create a specific folder for reliability diagrams
+    reliability_dir = os.path.join(output_dir, "reliability_diagrams")
+    os.makedirs(reliability_dir, exist_ok=True)
+    
+    # Save the plot
+    plt.savefig(f"{reliability_dir}/{dataset}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
 def run_integrated_analysis():
     # Models to compare
     models = [
@@ -467,6 +790,20 @@ def run_integrated_analysis():
         "V-A,V-M,V-NYT,V-T", 
         "Emobank", 
         "SST", 
+        "GoEmotions", 
+        "E-c"
+    ]
+    
+    # Ordinal and regular classification datasets
+    ordinal_datasets = [
+        "EI-oc", 
+        "TDT", 
+        "SST5",
+        "V-oc",
+    ]
+    
+    # Multi-label classification datasets
+    multilabel_datasets = [
         "GoEmotions", 
         "E-c"
     ]
@@ -495,6 +832,28 @@ def run_integrated_analysis():
             print(f"Generated plots for {dataset}")
         else:
             print(f"No metrics found for {dataset}")
+    
+    # Generate reliability diagrams for ordinal classification datasets
+    for dataset in ordinal_datasets:
+        print(f"Processing reliability diagram for {dataset}...")
+        reliability_data = load_reliability_data(dataset, models)
+        
+        if reliability_data:
+            plot_merged_reliability_diagram(reliability_data, dataset, output_dir)
+            print(f"Generated reliability diagram for {dataset}")
+        else:
+            print(f"No reliability data found for {dataset}")
+    
+    # Generate multi-label reliability diagrams for E-c and GoEmotions
+    for dataset in multilabel_datasets:
+        print(f"Processing multi-label reliability diagram for {dataset}...")
+        reliability_data = load_reliability_data(dataset, models)
+        
+        if reliability_data:
+            plot_multilabel_reliability_diagram(reliability_data, dataset, output_dir)
+            print(f"Generated multi-label reliability diagram for {dataset}")
+        else:
+            print(f"No reliability data found for {dataset}")
     
     # Generate performance tables
     generate_performance_tables(all_metrics_by_dataset, output_dir)
