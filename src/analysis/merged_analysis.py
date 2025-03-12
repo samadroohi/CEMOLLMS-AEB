@@ -274,7 +274,7 @@ def generate_ordinal_table(all_metrics_by_dataset, datasets, output_dir):
     index = pd.Index(all_models, name="Model")
     
     # Create MultiIndex for columns (dataset, metric)
-    metrics = ["accuracy", "macro_f1"]
+    metrics = ["accuracy", "macro_f1", "pearson_correlation"]
     column_tuples = [(dataset, metric) for dataset in datasets for metric in metrics]
     columns = pd.MultiIndex.from_tuples(column_tuples, names=["Dataset", "Metric"])
     
@@ -300,6 +300,12 @@ def generate_ordinal_table(all_metrics_by_dataset, datasets, output_dir):
                 df.loc[model, (dataset, "macro_f1")] = metrics_data["macro_f1"]
             elif "f1_macro" in metrics_data:
                 df.loc[model, (dataset, "macro_f1")] = metrics_data["f1_macro"]
+            
+            # Add Pearson correlation for ordinal tasks
+            if "pearson_correlation" in metrics_data:
+                df.loc[model, (dataset, "pearson_correlation")] = metrics_data["pearson_correlation"]
+            elif "pearson" in metrics_data:
+                df.loc[model, (dataset, "pearson_correlation")] = metrics_data["pearson"]
     
     # Save table
     df.to_csv(os.path.join(output_dir, "ordinal_performance.csv"))
@@ -401,7 +407,7 @@ def generate_calibration_table(all_metrics_by_dataset, output_dir):
     return df
 
 def generate_conformal_metrics_table(all_metrics_by_dataset, output_dir):
-    """Generate a summary table for conformal prediction metrics (mean confidence, ACE, MCOVE)."""
+    """Generate a summary table for conformal prediction metrics (mean confidence, ACE, MCovE, avg_size)."""
     # Get all datasets and models
     all_datasets = list(all_metrics_by_dataset.keys())
     all_models = set()
@@ -415,7 +421,7 @@ def generate_conformal_metrics_table(all_metrics_by_dataset, output_dir):
     index = pd.Index(all_models, name="Model")
     
     # Create MultiIndex for columns (dataset, metric)
-    metrics = ["mean_confidence", "ace", "mcove"]
+    metrics = ["mean_confidence", "ace", "mcove", "avg_size"]
     column_tuples = [(dataset, metric) for dataset in all_datasets for metric in metrics]
     columns = pd.MultiIndex.from_tuples(column_tuples, names=["Dataset", "Metric"])
     
@@ -424,25 +430,108 @@ def generate_conformal_metrics_table(all_metrics_by_dataset, output_dir):
     
     # Fill DataFrame with metrics
     for dataset in all_datasets:
+        if dataset not in all_metrics_by_dataset:
+            continue
+            
         for model in all_models:
             if model not in all_metrics_by_dataset[dataset]:
                 continue
                 
             metrics_data = all_metrics_by_dataset[dataset][model]
+            model_name = model
             
-            # Extract metrics
-            if "mean_confidence" in metrics_data:
-                df.loc[model, (dataset, "mean_confidence")] = metrics_data["mean_confidence"]
-            
-            if "ace" in metrics_data:
-                df.loc[model, (dataset, "ace")] = metrics_data["ace"]
+            # Calculate ACE and MCovE if not already present
+            if 'ace' not in metrics_data or 'mcove' not in metrics_data:
+                # Get confidence values and coverage
+                confidences = []
+                coverages = []
                 
-            if "mcove" in metrics_data:
+                if 'alpha' in metrics_data:
+                    confidences = [1 - alpha for alpha in metrics_data['alpha']]
+                elif 'confidences' in metrics_data:
+                    confidences = metrics_data['confidences']
+                
+                if 'coverage' in metrics_data:
+                    coverages = metrics_data['coverage']
+                elif 'coverages' in metrics_data:
+                    coverages = metrics_data['coverages']
+                
+                # Calculate ACE and MCovE if we have both confidences and coverages
+                if confidences and coverages:
+                    abs_errors = [abs(cov - conf) for conf, cov in zip(confidences, coverages)]
+                    ace = sum(abs_errors) / len(abs_errors)
+                    mcove = max(abs_errors)
+                    
+                    # Store calculated metrics
+                    metrics_data['ace'] = ace
+                    metrics_data['mcove'] = mcove
+            
+            # Store metrics in the DataFrame
+            if 'ace' in metrics_data:
+                df.loc[model, (dataset, "ace")] = metrics_data["ace"]
+            
+            if 'mcove' in metrics_data:
                 df.loc[model, (dataset, "mcove")] = metrics_data["mcove"]
+            
+            # Calculate and store mean confidence
+            confidences = []
+            if 'alpha' in metrics_data:
+                confidences = [1 - alpha for alpha in metrics_data['alpha']]
+            elif 'confidences' in metrics_data:
+                confidences = metrics_data['confidences']
+                
+            if confidences:
+                mean_confidence = sum(confidences) / len(confidences)
+                df.loc[model, (dataset, "mean_confidence")] = mean_confidence
+            
+            # Try to get size data from conformal prediction results
+            conformal_path = f"results/conformal_results/{dataset}/temp_0.9/{model_name}.json"
+            
+            avg_size = None
+            
+            # First try to get size from the metrics_data
+            if 'psize' in metrics_data:
+                sizes = metrics_data['psize']
+                avg_size = sum(sizes) / len(sizes)
+            elif 'average_interval_sizes' in metrics_data:
+                sizes = metrics_data['average_interval_sizes']
+                avg_size = sum(sizes) / len(sizes)
+            
+            # If not found, try to load from conformal results file
+            if avg_size is None and os.path.exists(conformal_path):
+                try:
+                    with open(conformal_path, 'r') as f:
+                        conformal_data = json.load(f)
+                    
+                    # Extract sizes from conformal prediction results
+                    # Different alphas have different sizes
+                    all_sizes = []
+                    
+                    for alpha_key in conformal_data:
+                        if alpha_key.replace('.', '', 1).isdigit():  # Check if it's an alpha key
+                            alpha_data = conformal_data[alpha_key]
+                            
+                            # Check for prediction_sets (classification) or intervals (regression)
+                            if 'prediction_sets' in alpha_data:
+                                sizes = [len(pred_set) for pred_set in alpha_data['prediction_sets']]
+                                if sizes:
+                                    all_sizes.append(np.mean(sizes))
+                            elif 'intervals' in alpha_data:
+                                sizes = [interval[1] - interval[0] for interval in alpha_data['intervals']]
+                                if sizes:
+                                    all_sizes.append(np.mean(sizes))
+                    
+                    if all_sizes:
+                        avg_size = sum(all_sizes) / len(all_sizes)
+                except Exception as e:
+                    print(f"Error loading conformal data for {model_name} on {dataset}: {e}")
+            
+            if avg_size is not None:
+                df.loc[model, (dataset, "avg_size")] = avg_size
     
     # Save table
     df.to_csv(os.path.join(output_dir, "conformal_metrics.csv"))
-    print(f"Saved conformal prediction metrics table to {output_dir}/conformal_metrics.csv")
+    print(f"Saved conformal metrics table to {output_dir}/conformal_metrics.csv")
     
     return df
 
