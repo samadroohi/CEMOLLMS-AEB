@@ -52,6 +52,11 @@ class OrdinalClassificationConformalPredictor(BaseConformalPredictor):
         for probs in softmax_probabilities:
             nonconformity_scores = 1 - probs
             pred_set = torch.where(nonconformity_scores <= threshold)[0].tolist()
+            # add all the classes between the min and max of the prediction set
+            if len(pred_set) > 1:   
+                min_pred_set = min(pred_set)
+                max_pred_set = max(pred_set)
+                pred_set = list(range(min_pred_set, max_pred_set+1))
             prediction_sets.append(pred_set)
             
         return prediction_sets

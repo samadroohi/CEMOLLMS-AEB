@@ -254,7 +254,7 @@ def run_conformal_prediction():
     baseline_cp = get_predictor(dataset_type)
     for alpha in Config.CP_ALPHA:
         q_hat = baseline_cp.fit(true_calibration, pred_calibration,probs_calibration, alpha)
-        conformal_results = baseline_cp.getmerged_metrics_conformal_results(true_test,pred_test, probs_test, q_hat)
+        conformal_results = baseline_cp.get_conformal_results(true_test,pred_test, probs_test, q_hat)
         
         print(f"Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}")
         save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, conformal_results, alpha)
@@ -295,9 +295,9 @@ if __name__ == "__main__":
                 Config.update_model_and_dataset(model_name, dataset_name)
                 
                 #1: Get model responses
-                #run_inference()
+                run_inference()
                 #2: Get conformal prediction results
-                #run_conformal_prediction()
+                run_conformal_prediction()
                 
                 # Clear GPU cache after processing each dataset
                 if torch.cuda.is_available():
