@@ -15,3 +15,6 @@ predicts/
 
 # Ignore configs
 configs/ 
+
+# Ignore results folder (do not sync to GitHub)
+/results/

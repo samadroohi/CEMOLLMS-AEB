@@ -557,20 +557,325 @@ def compute_regression_metrics(y_true, y_pred, model=None, X=None):
 
     return metrics
 def calibration_anlaysis(results, ds_type, output_dir=None):
+    # Initialize all metrics dictionaries
+    calibration_metrics = {}
+    cp_metrics = {}
+    top_p_metrics = {}
 
     if ds_type in Config.TASK_TYPES["ordinal_classification"]:
-        calibration_metrics = classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir =output_dir)
-        cp_metrics =  cp_diagrams(results, ds_type, output_dir)
+        calibration_metrics = classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir=output_dir)
+        cp_metrics = cp_diagrams(results, ds_type, output_dir)
+        top_p_metrics = top_p_analysis(results[str(Config.CP_ALPHA[0])], ds_type, output_dir)
     elif ds_type in Config.TASK_TYPES["regression"]:
         cp_metrics = {'alpha':[],  'coverages': [], 'average_interval_sizes': []}
         for alpha in Config.CP_ALPHA:
-            cp_data = regression_calibration_diagram(results[str(alpha)], ds_type, alpha, output_dir =output_dir)
+            cp_data = regression_calibration_diagram(results[str(alpha)], ds_type, alpha, output_dir=output_dir)
             cp_metrics['alpha'].append(alpha)
             cp_metrics['coverages'].append(cp_data['coverage'])
             cp_metrics['average_interval_sizes'].append(cp_data['avg_interval_size'])
             
         calibration_metrics = compute_regression_metrics(results[str(Config.CP_ALPHA[0])]["true_values"], results[str(Config.CP_ALPHA[0])]["predictions"])
+        # For regression, top_p_metrics remains empty
     elif ds_type in Config.TASK_TYPES["multiclass_classification"]:
         calibration_metrics = multiclass_classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir)
         cp_metrics = cp_diagrams(results, ds_type, output_dir)
-    return calibration_metrics, cp_metrics
+        top_p_metrics = multiclass_top_p_analysis(results[str(Config.CP_ALPHA[0])], ds_type, output_dir)
+    return calibration_metrics, cp_metrics, top_p_metrics
+
+def top_p_analysis(results: dict, ds_type: str, output_dir: str = None):
+    """
+    Analyze prediction sets based on accumulating probabilities until reaching target confidence levels.
+    For ordinal classification, includes all classes between min and max in prediction set.
+    
+    Args:
+        results (dict): Dictionary containing prediction results
+        ds_type (str): Dataset type
+        output_dir (str, optional): Directory to save plots
+        
+    Returns:
+        dict: Dictionary containing top-p analysis metrics
+    """
+    try:
+        # Extract true values and probabilities
+        y_true = np.array([label[1] for label in results["true_values"]])
+        probs = np.array(results["probs"])
+        
+        # Initialize metrics
+        confidences = []
+        coverages = []
+        set_sizes = []
+        mcove = 0
+        
+        # For each confidence level (1 - alpha)
+        for alpha in Config.CP_ALPHA:
+            target_confidence = 1 - alpha
+            prediction_sets = []
+            coverage = 0
+            
+            # For each example
+            for i in range(len(y_true)):
+                # Sort probabilities in descending order
+                sorted_probs = np.sort(probs[i])[::-1]
+                sorted_indices = np.argsort(probs[i])[::-1]
+                
+                # Accumulate probabilities until reaching target confidence
+                cumulative_prob = 0
+                prediction_set = []
+                
+                for j in range(len(sorted_probs)):
+                    cumulative_prob += sorted_probs[j]
+                    prediction_set.append(sorted_indices[j])
+                    if cumulative_prob >= target_confidence:
+                        break
+                
+                # For ordinal classification, include all classes between min and max
+                if len(prediction_set) > 1:
+                    min_pred_set = min(prediction_set)
+                    max_pred_set = max(prediction_set)
+                    prediction_set = list(range(min_pred_set, max_pred_set + 1))
+                
+                prediction_sets.append(prediction_set)
+                
+                # Check if true label is in prediction set
+                if y_true[i] in prediction_set:
+                    coverage += 1
+            
+            # Calculate metrics
+            coverage_rate = coverage / len(y_true)
+            avg_set_size = np.mean([len(ps) for ps in prediction_sets])
+            
+            confidences.append(target_confidence)
+            coverages.append(coverage_rate)
+            set_sizes.append(avg_set_size)
+            
+            # Update maximum coverage error
+            mcove = max(mcove, abs(coverage_rate - target_confidence))
+        
+        # Calculate average coverage error
+        ace = np.mean(np.abs(np.array(coverages) - np.array(confidences)))
+        
+        # Create plot
+        plt.figure(figsize=(10, 6))
+        
+        # Plot prediction set size vs confidence
+        plt.plot(confidences, set_sizes, 'b-', label='Prediction set size')
+        plt.scatter(confidences, set_sizes, c='blue')
+        
+        # Add coverage annotations
+        for i, (conf, size) in enumerate(zip(confidences, set_sizes)):
+            plt.annotate(f"{coverages[i]:.2f}", (conf, size), xytext=(5, 5), textcoords="offset points")
+        
+        # Customize plot
+        plt.grid(True, alpha=0.3)
+        plt.title(f'Top-p Analysis ({ds_type})')
+        plt.xlabel('Confidence Level (1 - alpha)')
+        plt.ylabel('Average Prediction Set Size')
+        plt.legend()
+        
+        # Add metrics annotations
+        plt.text(0.05, 0.95, f'ACE: {ace:.3f}', transform=plt.gca().transAxes,
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        plt.text(0.05, 0.90, f'MCovE: {mcove:.3f}', transform=plt.gca().transAxes,
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        
+        # Save or show plot
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, f'top_p_analysis_{ds_type}.png')
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Plot saved to: {output_path}")
+        else:
+            plt.show()
+        
+        # Return metrics
+        metrics = {
+            'alpha': [1 - conf for conf in confidences],
+            'coverage': coverages,
+            'psize': set_sizes,
+            'ace': ace,
+            'mcove': mcove
+        }
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"Error in top_p_analysis: {str(e)}")
+        print("Data types:")
+        print(f"true_values type: {type(results['true_values'][0])}")
+        print(f"probs type: {type(results['probs'][0])}")
+        raise
+
+def multiclass_top_p_analysis(results: dict, ds_type: str, output_dir: str = None):
+    """
+    Analyze prediction sets for multiclass classification using top-p approach.
+    Uses max logit for each class, applies softmax, then follows top-p procedure.
+    Coverage is calculated as the fraction of examples where all true labels are in the prediction set.
+    
+    Args:
+        results (dict): Dictionary containing prediction results
+        ds_type (str): Dataset type
+        output_dir (str, optional): Directory to save plots
+        
+    Returns:
+        dict: Dictionary containing top-p analysis metrics
+    """
+    try:
+        # Extract true values and probabilities
+        y_true = results["true_values"]
+        probs = results["probs"]
+        
+        # Get emotion labels mapping
+        emotion_labels = list(Config.VALID_D_TYPES[ds_type].values())
+        
+        # Initialize metrics
+        confidences = []
+        coverages = []
+        set_sizes = []
+        mcove = 0
+        
+        # For each confidence level (1 - alpha)
+        for alpha in Config.CP_ALPHA:
+            target_confidence = 1 - alpha
+            prediction_sets = []
+            coverage = 0
+            total_examples = 0
+            
+            # For each example
+            for i in range(len(y_true)):
+                # Convert true labels to a set of strings
+                true_labels = set(str(label) if not isinstance(label, str) else label for label in y_true[i])
+                max_logits = []
+                # Get max logit for each class
+                if len(probs[i])>0:
+                    # Get max logit for each position across all class probability vectors
+                    max_logits = [max(prob_vec[j] for prob_vec in probs[i]) for j in range(len(probs[i][0]))]
+                else:
+                    max_logits.append(float('-inf'))  # Use negative infinity for empty lists
+
+                # Convert to numpy array and check if it's empty
+                max_logits = np.array(max_logits)
+                if len(max_logits) == 0 or np.all(max_logits == float('-inf')):
+                    continue  # Skip this example if no valid logits
+                
+                # Apply softmax to get probabilities
+                try:
+                    #exp_logits = np.exp(max_logits - np.max(max_logits))  # For numerical stability
+                    probs_softmax = max_logits / max_logits.sum()
+                except (ValueError, RuntimeWarning):
+                    # If there's an issue with the logits, use uniform probabilities
+                    probs_softmax = np.ones_like(max_logits) / len(max_logits)
+                
+                # Sort probabilities in descending order
+                sorted_probs = np.sort(probs_softmax)[::-1]
+                sorted_indices = np.argsort(probs_softmax)[::-1]
+                
+                # Accumulate probabilities until reaching target confidence
+                cumulative_prob = 0
+                prediction_set = []
+                
+                for j in range(len(sorted_probs)):
+                    cumulative_prob += sorted_probs[j]
+                    # Map index to emotion label
+                    pred_label = str(emotion_labels[sorted_indices[j]])
+                    prediction_set.append(pred_label)
+                    if cumulative_prob >= target_confidence:
+                        break
+                
+                prediction_sets.append(prediction_set)
+                
+                # Convert prediction set to set of strings for comparison
+                pred_set = set(prediction_set)
+                
+                # Debug prints for first few examples
+                if i < 5:  # Print first 5 examples
+                    print(f"\nExample {i}:")
+                    print(f"True labels: {true_labels}")
+                    print(f"Prediction set: {pred_set}")
+                    print(f"Cumulative probability: {cumulative_prob}")
+                    print(f"Is subset: {true_labels.issubset(pred_set)}")
+                
+                # Check if true labels are a subset of prediction set
+                if true_labels.issubset(pred_set):
+                    coverage += 1
+                total_examples += 1
+            
+            # Calculate metrics
+            if total_examples > 0:  # Only calculate metrics if we have valid examples
+                coverage_rate = coverage / total_examples
+                avg_set_size = np.mean([len(ps) for ps in prediction_sets])
+                
+                confidences.append(target_confidence)
+                coverages.append(coverage_rate)
+                set_sizes.append(avg_set_size)
+                
+                # Update maximum coverage error
+                mcove = max(mcove, abs(coverage_rate - target_confidence))
+                
+                # Debug print for this confidence level
+                print(f"\nConfidence level {target_confidence}:")
+                print(f"Coverage rate: {coverage_rate}")
+                print(f"Average set size: {avg_set_size}")
+                print(f"Total coverage: {coverage} out of {total_examples}")
+        
+        # Calculate average coverage error
+        if len(coverages) > 0:  # Only calculate if we have valid coverages
+            ace = np.mean(np.abs(np.array(coverages) - np.array(confidences)))
+        else:
+            ace = 0
+            mcove = 0
+            confidences = [1 - alpha for alpha in Config.CP_ALPHA]
+            coverages = [0] * len(Config.CP_ALPHA)
+            set_sizes = [0] * len(Config.CP_ALPHA)
+        
+        # Create plot
+        plt.figure(figsize=(10, 6))
+        
+        # Plot prediction set size vs confidence
+        plt.plot(confidences, set_sizes, 'b-', label='Prediction set size')
+        plt.scatter(confidences, set_sizes, c='blue')
+        
+        # Add coverage annotations
+        for i, (conf, size) in enumerate(zip(confidences, set_sizes)):
+            plt.annotate(f"{coverages[i]:.2f}", (conf, size), xytext=(5, 5), textcoords="offset points")
+        
+        # Customize plot
+        plt.grid(True, alpha=0.3)
+        plt.title(f'Top-p Analysis ({ds_type})')
+        plt.xlabel('Confidence Level (1 - alpha)')
+        plt.ylabel('Average Prediction Set Size')
+        plt.legend()
+        
+        # Add metrics annotations
+        plt.text(0.05, 0.95, f'ACE: {ace:.3f}', transform=plt.gca().transAxes,
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        plt.text(0.05, 0.90, f'MCovE: {mcove:.3f}', transform=plt.gca().transAxes,
+                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
+        
+        # Save or show plot
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, f'top_p_analysis_{ds_type}.png')
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Plot saved to: {output_path}")
+        else:
+            plt.show()
+        
+        # Return metrics
+        metrics = {
+            'alpha': [1 - conf for conf in confidences],
+            'coverage': coverages,
+            'psize': set_sizes,
+            'ace': ace,
+            'mcove': mcove
+        }
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"Error in multiclass_top_p_analysis: {str(e)}")
+        print("Data types:")
+        print(f"true_values type: {type(results['true_values'][0])}")
+        print(f"probs type: {type(results['probs'][0])}")
+        raise

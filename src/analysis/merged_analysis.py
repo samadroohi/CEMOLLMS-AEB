@@ -858,6 +858,214 @@ def plot_multilabel_reliability_diagram(all_reliability_data, dataset, output_di
     plt.savefig(f"{reliability_dir}/{dataset}.png", dpi=300, bbox_inches='tight')
     plt.close()
 
+def load_top_p_metrics(dataset, models, temp="0.9"):
+    """Load top-p metrics for all models for a specific dataset."""
+    all_metrics = {}
+    
+    for model in models:
+        model_name = model.split('/')[-1]
+        metrics_path = f"results/plots/{dataset}/temp_{temp}/{model_name}/combined_metrics.json"
+        
+        if os.path.exists(metrics_path):
+            with open(metrics_path, 'r') as f:
+                metrics = json.load(f)
+                # Extract top-p metrics (they have 'top_p_' prefix)
+                top_p_metrics = {k: v for k, v in metrics.items() if k.startswith('top_p_')}
+                if top_p_metrics:
+                    all_metrics[model_name] = top_p_metrics
+        else:
+            print(f"Warning: No metrics found for {model_name} on {dataset}")
+    
+    return all_metrics
+
+def plot_top_p_comparison(all_metrics, dataset, output_dir="results/integrated_analysis"):
+    """Plot comparison of top-p metrics across models for a specific dataset."""
+    try:
+        from adjustText import adjust_text
+    except ImportError:
+        print("Please install adjustText with: pip install adjustText")
+        def adjust_text(texts):
+            pass
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    all_texts = []
+    
+    for model_name, metrics in all_metrics.items():
+        # Get confidence values and prediction set sizes
+        if 'top_p_alpha' in metrics:
+            confidence = [1-a for a in metrics['top_p_alpha']]
+        else:
+            print(f"Warning: No alpha values for {model_name} on {dataset}")
+            continue
+        
+        if 'top_p_psize' in metrics:
+            psize = metrics['top_p_psize']
+        else:
+            print(f"Warning: No prediction set sizes for {model_name} on {dataset}")
+            continue
+        
+        if 'top_p_coverage' in metrics:
+            coverage = metrics['top_p_coverage']
+        else:
+            print(f"Warning: No coverage values for {model_name} on {dataset}")
+            continue
+        
+        # Create DataFrame for plotting
+        df = pd.DataFrame({
+            'confidence': confidence,
+            'psize': psize,
+            'coverage': coverage
+        })
+        
+        # Plot points with smaller fixed size and lines
+        ax.scatter(df['confidence'], df['psize'], s=30, alpha=0.7)
+        ax.plot(df['confidence'], df['psize'], '-', alpha=0.7, label=model_name)
+        
+        # Add text annotations for coverage
+        for i, row in df.iterrows():
+            if i % 2 == 0:  # Annotate every other point
+                txt = ax.text(
+                    row['confidence'], 
+                    row['psize'], 
+                    f"{row['coverage']:.2f}", 
+                    fontsize=8,
+                    ha='center', 
+                    va='bottom'
+                )
+                all_texts.append(txt)
+    
+    # Adjust text positions to avoid overlaps
+    if all_texts:
+        adjust_text(all_texts, arrowprops=dict(arrowstyle='->', color='red'))
+    
+    ax.set_title(f'Top-p Analysis Comparison for {dataset}')
+    ax.set_xlabel('Confidence (1-α)')
+    ax.set_ylabel('Prediction Set Size')
+    ax.grid(True, alpha=0.3)
+    
+    # Move legend outside the plot
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    
+    # Adjust layout to make room for the legend
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
+    
+    # Create a specific folder for top-p comparison plots
+    top_p_dir = os.path.join(output_dir, "top_p_comparison")
+    os.makedirs(top_p_dir, exist_ok=True)
+    
+    # Save the plot
+    plt.savefig(f"{top_p_dir}/{dataset}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_top_p_coverage_comparison(all_metrics, dataset, output_dir="results/integrated_analysis"):
+    """Plot comparison of top-p coverage across models for a specific dataset."""
+    try:
+        from adjustText import adjust_text
+    except ImportError:
+        print("Please install adjustText with: pip install adjustText")
+        def adjust_text(texts):
+            pass
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    # Add diagonal reference line (perfect calibration)
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
+    
+    for model_name, metrics in all_metrics.items():
+        # Get confidence values and coverage
+        if 'top_p_alpha' in metrics:
+            confidence = [1-a for a in metrics['top_p_alpha']]
+        else:
+            print(f"Warning: No alpha values for {model_name} on {dataset}")
+            continue
+        
+        if 'top_p_coverage' in metrics:
+            coverage = metrics['top_p_coverage']
+        else:
+            print(f"Warning: No coverage values for {model_name} on {dataset}")
+            continue
+        
+        # Create DataFrame for plotting
+        df = pd.DataFrame({
+            'confidence': confidence,
+            'coverage': coverage
+        })
+        
+        # Plot points with smaller fixed size and lines
+        ax.scatter(df['confidence'], df['coverage'], s=30, alpha=0.7)
+        ax.plot(df['confidence'], df['coverage'], '-', alpha=0.7, label=model_name)
+    
+    ax.set_title(f'Top-p Coverage vs Confidence for {dataset}')
+    ax.set_xlabel('Confidence (1-α)')
+    ax.set_ylabel('Coverage')
+    ax.grid(True, alpha=0.3)
+    
+    # Move legend outside the plot
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+    
+    # Adjust layout to make room for the legend
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
+    
+    # Create a specific folder for top-p coverage comparison plots
+    top_p_dir = os.path.join(output_dir, "top_p_coverage")
+    os.makedirs(top_p_dir, exist_ok=True)
+    
+    # Save the plot
+    plt.savefig(f"{top_p_dir}/{dataset}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+def generate_top_p_metrics_table(all_metrics_by_dataset, output_dir):
+    """Generate a summary table for top-p metrics (ACE, MCovE, avg_size)."""
+    # Get all datasets and models
+    all_datasets = list(all_metrics_by_dataset.keys())
+    all_models = set()
+    for dataset in all_datasets:
+        all_models.update(all_metrics_by_dataset[dataset].keys())
+    
+    all_models = sorted(list(all_models))
+    all_datasets = sorted(all_datasets)
+    
+    # Create index for rows (models)
+    index = pd.Index(all_models, name="Model")
+    
+    # Create MultiIndex for columns (dataset, metric)
+    metrics = ["ace", "mcove", "avg_size"]
+    column_tuples = [(dataset, metric) for dataset in all_datasets for metric in metrics]
+    columns = pd.MultiIndex.from_tuples(column_tuples, names=["Dataset", "Metric"])
+    
+    # Create DataFrame
+    df = pd.DataFrame(index=index, columns=columns)
+    
+    # Fill DataFrame with metrics
+    for dataset in all_datasets:
+        if dataset not in all_metrics_by_dataset:
+            continue
+            
+        for model in all_models:
+            if model not in all_metrics_by_dataset[dataset]:
+                continue
+                
+            metrics_data = all_metrics_by_dataset[dataset][model]
+            
+            # Extract top-p metrics
+            if 'top_p_ace' in metrics_data:
+                df.loc[model, (dataset, "ace")] = metrics_data["top_p_ace"]
+            
+            if 'top_p_mcove' in metrics_data:
+                df.loc[model, (dataset, "mcove")] = metrics_data["top_p_mcove"]
+            
+            # Calculate average prediction set size
+            if 'top_p_psize' in metrics_data:
+                sizes = metrics_data['top_p_psize']
+                avg_size = sum(sizes) / len(sizes)
+                df.loc[model, (dataset, "avg_size")] = avg_size
+    
+    # Save table
+    df.to_csv(os.path.join(output_dir, "top_p_metrics.csv"))
+    print(f"Saved top-p metrics table to {output_dir}/top_p_metrics.csv")
+    
+    return df
+
 def run_integrated_analysis():
     # Models to compare
     models = [
@@ -918,6 +1126,12 @@ def run_integrated_analysis():
             # Plot confidence vs empirical coverage
             plot_confidence_vs_coverage(all_metrics, dataset, output_dir)
             
+            # Load and plot top-p metrics
+            top_p_metrics = load_top_p_metrics(dataset, models)
+            if top_p_metrics:
+                plot_top_p_comparison(top_p_metrics, dataset, output_dir)
+                plot_top_p_coverage_comparison(top_p_metrics, dataset, output_dir)
+            
             print(f"Generated plots for {dataset}")
         else:
             print(f"No metrics found for {dataset}")
@@ -946,6 +1160,9 @@ def run_integrated_analysis():
     
     # Generate performance tables
     generate_performance_tables(all_metrics_by_dataset, output_dir)
+    
+    # Generate top-p metrics table
+    generate_top_p_metrics_table(all_metrics_by_dataset, output_dir)
 
 if __name__ == "__main__":
     run_integrated_analysis()

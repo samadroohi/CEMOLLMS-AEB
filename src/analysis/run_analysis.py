@@ -2,6 +2,10 @@ import json
 import numpy as np
 import sys
 import os
+import matplotlib
+# Set the backend to Agg before importing pyplot
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from analysis.visualization_utils import calibration_anlaysis
 
 # Add parent directory to Python path
@@ -23,6 +27,7 @@ def run_analysis(model_name, dataset_name):
         # Initialize these variables before the if-elif blocks
         calibration_metrics = {}
         cp_metrics = {}
+        top_p_metrics = {}
         
         if Config.DS_TYPE in Config.TASK_TYPES["regression"]:
             print("\nRegression Analysis Results:")
@@ -34,17 +39,15 @@ def run_analysis(model_name, dataset_name):
             
             # Generate calibration plot
             output_dir = Config.PLOTS_DIR
-            calibration_metrics, cp_metrics = calibration_anlaysis(
+            calibration_metrics, cp_metrics, _ = calibration_anlaysis(
                 results,
                 Config.DS_TYPE,
                 output_dir=output_dir
             )
             
             print("\nCalibration Plot Results:")
- 
-
-            print ("calibration metrics: ", calibration_metrics)
-            print ("cp_metrics: ", cp_metrics)
+            print("calibration metrics: ", calibration_metrics)
+            print("cp_metrics: ", cp_metrics)
 
         elif Config.DS_TYPE in Config.TASK_TYPES["classification"]:
             print("\nClassification Analysis Results:")
@@ -64,10 +67,11 @@ def run_analysis(model_name, dataset_name):
                     print(f"{emotion}: {pearson:.4f}")
             output_dir = Config.PLOTS_DIR
             
-            calibration_metrics, cp_metrics  = calibration_anlaysis(
-            results,
-            Config.DS_TYPE,
-            output_dir=output_dir)
+            calibration_metrics, cp_metrics, top_p_metrics = calibration_anlaysis(
+                results,
+                Config.DS_TYPE,
+                output_dir=output_dir
+            )
 
             print("\nCalibration Plot Results:")
             print(f"Accuracy: {calibration_metrics.get('accuracy', 'N/A')}")
@@ -75,10 +79,13 @@ def run_analysis(model_name, dataset_name):
             print(f"MCalE: {calibration_metrics.get('mcale', 'N/A')}")
             print(f"Brier Score: {calibration_metrics.get('brier_score', 'N/A')}")
             print(f"Alpha: {cp_metrics['alpha']} Coverage: {cp_metrics['coverage']} Prediction Set Size: {cp_metrics['psize']}, ACE: {cp_metrics['ace']}, MCE: {cp_metrics['mcove']}")
-            # Option 1: Using update() method
-            
+            print("\nTop-p Analysis Results:")
+            print(f"Alpha: {top_p_metrics['alpha']} Coverage: {top_p_metrics['coverage']} Prediction Set Size: {top_p_metrics['psize']}, ACE: {top_p_metrics['ace']}, MCovE: {top_p_metrics['mcove']}")
 
         elif Config.DS_TYPE in Config.TASK_TYPES["multiclass_classification"]:
+            if Config.DS_TYPE =="E-c" and Config.MODEL_NAME_OR_PATH == "lzw1008/Emoopt-13b":
+                print("dataset: ", Config.DS_TYPE)
+                print("model: ", Config.MODEL_NAME_OR_PATH)
             print("\nMulticlass Classification Analysis Results:")
             print(f"Jaccard Index: {performance_metrics['jaccard_index']:.4f}")
             print(f"Micro-F1: {performance_metrics['f1_micro']:.4f}")
@@ -86,20 +93,30 @@ def run_analysis(model_name, dataset_name):
             
             # If you want to generate calibration plots for multiclass
             output_dir = Config.PLOTS_DIR
-            calibration_metrics, cp_metrics = calibration_anlaysis(
+            calibration_metrics, cp_metrics, top_p_metrics = calibration_anlaysis(
                 results,
                 Config.DS_TYPE,
                 output_dir=output_dir
             )
+            
+            print("\nCalibration Plot Results:")
+            print(f"Jaccard Similarity: {calibration_metrics.get('jaccard_similarity', 'N/A')}")
+            print(f"ECE: {calibration_metrics.get('ece', 'N/A')}")
+            print(f"MCalE: {calibration_metrics.get('mcale', 'N/A')}")
+            print(f"Alpha: {cp_metrics['alpha']} Coverage: {cp_metrics['coverage']} Prediction Set Size: {cp_metrics['psize']}, ACE: {cp_metrics['ace']}, MCE: {cp_metrics['mcove']}")
+            print("\nTop-p Analysis Results:")
+            print(f"Alpha: {top_p_metrics['alpha']} Coverage: {top_p_metrics['coverage']} Prediction Set Size: {top_p_metrics['psize']}, ACE: {top_p_metrics['ace']}, MCovE: {top_p_metrics['mcove']}")
         
         # Only save metrics if they're not empty
-        if calibration_metrics or cp_metrics or performance_metrics:
+        if calibration_metrics or cp_metrics or performance_metrics or top_p_metrics:
             merged_metrics = performance_metrics.copy()  # Start with performance metrics
             # Add calibration and CP metrics if they exist
             if calibration_metrics:
                 merged_metrics.update(calibration_metrics)
             if cp_metrics:
                 merged_metrics.update(cp_metrics)
+            if top_p_metrics:  # Only add top_p metrics if they exist
+                merged_metrics.update({'top_p_' + k: v for k, v in top_p_metrics.items()})
             
             metrics_file = os.path.join(Config.PLOTS_DIR, 'combined_metrics.json')
             os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
