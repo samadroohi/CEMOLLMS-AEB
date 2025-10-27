@@ -3,25 +3,28 @@ from conformalprediction.regression import ConformalRegressionPredictor
 from conformalprediction.classification import ClassificationConformalPredictor
 from conformalprediction.multiclass import MulticlassConformalPredictor
 from conformalprediction.ordinal_classification import OrdinalClassificationConformalPredictor
+from conformalprediction.localweightedcp import LocalWeightedCPredictor
+from conformalprediction.localclusteredcp import LocalClusteredCPredictor
+#from conformalprediction.localweightedcp import NormalizedConformalRegression
 import json
 import os
 import numpy as np
 import torch
 import re
 
-def compute_probs(ds_type, token_logits):
-    if ds_type in Config.CLASSIFICATION_DS_TYPES:
-        pass
-    elif ds_type in Config.MULTICLASS_CLASSIFICATION_DS_TYPES:
-        pass
-def get_predictor(ds_type):
-    if ds_type in Config.TASK_TYPES["classification"]:
+def get_predictor(ds_type, alpha):
+    if ds_type =='classification':
         return ClassificationConformalPredictor()
-    elif ds_type in Config.TASK_TYPES["multiclass_classification"]:
+    elif ds_type == "multiclass_classification":
         return MulticlassConformalPredictor()
-    elif ds_type in Config.TASK_TYPES["regression"]:
+    elif ds_type == "regression":
         return ConformalRegressionPredictor()
-    elif ds_type in Config.TASK_TYPES["ordinal_classification"]:
+    if ds_type == "weighted_regression":     # hybrid normalized + local 
+        return None
+    elif ds_type == "local_regression":      # pure local/weighted CP
+        return None
+    
+    elif ds_type == "ordinal_classification":
         return OrdinalClassificationConformalPredictor()
 
 def cleaning_results_regression(results, ds_type):
