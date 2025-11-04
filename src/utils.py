@@ -14,7 +14,13 @@ def get_predictor(ds_type, alpha):
     if ds_type =='classification':
         return ClassificationConformalPredictor()
     elif ds_type == "multiclass_classification":
-        return MulticlassConformalPredictor()
+        class_map = Config.VALID_D_TYPES.get(Config.DS_TYPE, {})
+        classes = list(class_map.values()) if isinstance(class_map, dict) else list(class_map)
+        if not classes:
+            raise ValueError(f"No class vocabulary defined for dataset type '{Config.DS_TYPE}'")
+        mode = getattr(Config, "MULTICLASS_CP_MODE", "hybrid")
+        tau = float(getattr(Config, "MULTICLASS_RARE_SHRINK", 10.0))
+        return MulticlassConformalPredictor(classes=classes, mode=mode, rare_shrink_tau=tau)
     elif ds_type == "regression":
         return ConformalRegressionPredictor()
     if ds_type == "weighted_regression":     # hybrid normalized + local 

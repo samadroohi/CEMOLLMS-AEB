@@ -1,3 +1,6 @@
+import os
+
+
 class Config:
     # ---------- Model settings ----------
     MODEL_NAME_OR_PATH = None
@@ -19,6 +22,11 @@ class Config:
 
     VERBOSE = False
     CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+
+    # ---------- Multiclass CP settings ----------
+    MULTICLASS_CP_MODE = "hybrid"  # options: "global", "mondrian", "hybrid"
+    MULTICLASS_CP_MODES = ["global", "mondrian", "hybrid"]
+    MULTICLASS_RARE_SHRINK = 5     # τ parameter for rare-class shrinkage
 
     # dataset selection
     DS_TYPE = None
@@ -127,8 +135,60 @@ class Config:
 
         # Existing artifacts
         cls.RESULTS_FILE = f"results/responses/{cls.DS_TYPE}/temp_{temperature}/{model_name_short}.json"
-        cls.CONFORMAL_RESULTS_FILE = f"results/conformal_results/{cls.DS_TYPE}/temp_{temperature}/{model_name_short}.json"
+        cls.CONFORMAL_RESULTS_FILE = cls._build_conformal_results_path(model_name_short, temperature)
         cls.PLOTS_DIR = f"results/plots/{cls.DS_TYPE}/temp_{temperature}/{model_name_short}"
 
         # NEW: hidden-state dump path (aligned row-by-row with RESULTS_FILE)
         cls.HIDDEN_OUT = f"results/hidden/{cls.DS_TYPE}/temp_{temperature}/{model_name_short}.npy"
+
+    @classmethod
+    def _build_conformal_results_path(cls, model_name_short: str, temperature: float) -> str:
+        """Construct the conformal-results path, adding mode tags for multiclass runs."""
+        base_dir = f"results/conformal_results/{cls.DS_TYPE}/temp_{temperature}"
+        suffix = ""
+        if cls.DS_TYPE in cls.TASK_TYPES.get("multiclass_classification", []):
+            mode = str(getattr(cls, "MULTICLASS_CP_MODE", "")).strip().lower()
+            if mode:
+                parts = [mode]
+                tau = getattr(cls, "MULTICLASS_RARE_SHRINK", None)
+                if tau is not None and mode in {"hybrid", "mondrian"}:
+                    try:
+                        tau_value = float(tau)
+                    except (TypeError, ValueError):
+                        tau_value = None
+                    if tau_value is not None and tau_value > 0:
+                        if tau_value.is_integer():
+                            tau_str = str(int(tau_value))
+                        else:
+                            tau_str = str(tau_value).replace(".", "p")
+                        parts.append(f"tau{tau_str}")
+                safe_tag = cls._sanitize_tag("_".join(parts))
+                if safe_tag:
+                    suffix = f"__{safe_tag}"
+        filename = f"{model_name_short}{suffix}.json"
+        return os.path.join(base_dir, filename)
+
+    @staticmethod
+    def _sanitize_tag(tag: str) -> str:
+        tag = tag.lower()
+        return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "-" for ch in tag)
+
+    @classmethod
+    def get_multiclass_modes(cls):
+        """Return the list of multiclass CP modes to evaluate in the current run."""
+        modes = getattr(cls, "MULTICLASS_CP_MODES", None)
+        normalized = []
+        if modes:
+            for mode in modes:
+                mode_str = str(mode).strip().lower()
+                if mode_str:
+                    normalized.append(mode_str)
+        if normalized:
+            unique_modes = []
+            for mode in normalized:
+                if mode not in unique_modes:
+                    unique_modes.append(mode)
+            if unique_modes:
+                return unique_modes
+        default_mode = getattr(cls, "MULTICLASS_CP_MODE", None)
+        return [default_mode] if default_mode else ["hybrid"]

@@ -349,6 +349,7 @@ def run_inference():
 
 def run_conformal_prediction():
     dataset_type = Config.DS_TYPE
+    Config.update_paths()
 
     # Load & filter results
     with open(Config.RESULTS_FILE, 'r', encoding="utf-8") as read_f:
@@ -410,22 +411,55 @@ def run_conformal_prediction():
         true_test, pred_test, probs_test = tuples_test
 
    
-    # --- Conformal prediction ---
-    for alpha in Config.CP_ALPHA:
-        for ttype in Config.TASK_TYPES:
-            if Config.DS_TYPE in Config.TASK_TYPES[ttype]:
-                baseline_cp = get_predictor(ttype, alpha)  # should return your LocalWeightedCPredictor
-                if ttype == "weighted_regression" or ttype == "local_regression":
-                    #TBD: Use local clustered CP
-                    pass
-                else:
-                    q_hat = baseline_cp.fit(true_calibration, pred_calibration, probs_calibration, alpha)
-                    conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, probs_test, q_hat)
+    is_multiclass_task = dataset_type in Config.TASK_TYPES.get("multiclass_classification", [])
+    original_multiclass_mode = getattr(Config, "MULTICLASS_CP_MODE", None)
+    modes_to_run = Config.get_multiclass_modes() if is_multiclass_task else [original_multiclass_mode]
 
-                    print(f" Task: {ttype} Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}")
-                    save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, conformal_results, alpha)
-        else:
-            print(f"Dataset type {Config.DS_TYPE} not found in TASK_TYPES; skipping conformal prediction.")
+    for mode in modes_to_run:
+        if is_multiclass_task:
+            Config.MULTICLASS_CP_MODE = mode
+            Config.update_paths()
+            print(f"\n=== Multiclass CP mode: {mode} ===")
+
+        for alpha in Config.CP_ALPHA:
+            matched_type = False
+            for ttype in Config.TASK_TYPES:
+                if Config.DS_TYPE in Config.TASK_TYPES[ttype]:
+                    matched_type = True
+                    baseline_cp = get_predictor(ttype, alpha)
+                    if ttype == "weighted_regression" or ttype == "local_regression":
+                        # TBD: Use local clustered CP
+                        pass
+                    else:
+                        q_hat = baseline_cp.fit(true_calibration, pred_calibration, probs_calibration, alpha)
+                        conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, probs_test, q_hat)
+
+                        if hasattr(baseline_cp, "_empty_prob_calibration") and hasattr(baseline_cp, "_empty_prob_test"):
+                            empty_cal = getattr(baseline_cp, "_empty_prob_calibration", 0)
+                            empty_test = getattr(baseline_cp, "_empty_prob_test", 0)
+                            if empty_cal or empty_test:
+                                print(
+                                    f"Warning: skipped {empty_cal} calibration and {empty_test} test samples with empty probability vectors."
+                                )
+
+                        print(
+                            f" Task: {ttype} Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}"
+                        )
+                        save_cp_results(
+                            dataset_type,
+                            input_test,
+                            true_test,
+                            pred_test,
+                            probs_test,
+                            conformal_results,
+                            alpha,
+                        )
+            if not matched_type:
+                print(f"Dataset type {Config.DS_TYPE} not found in TASK_TYPES; skipping conformal prediction.")
+
+    if is_multiclass_task:
+        Config.MULTICLASS_CP_MODE = original_multiclass_mode
+        Config.update_paths()
 
 if __name__ == "__main__":
     analysis = False # False if you want to run inference and conformal prediction
