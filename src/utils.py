@@ -3,8 +3,6 @@ from conformalprediction.regression import ConformalRegressionPredictor
 from conformalprediction.classification import ClassificationConformalPredictor
 from conformalprediction.multiclass import MulticlassConformalPredictor
 from conformalprediction.ordinal_classification import OrdinalClassificationConformalPredictor
-from conformalprediction.localweightedcp import LocalWeightedCPredictor
-from conformalprediction.localclusteredcp import LocalClusteredCPredictor
 #from conformalprediction.localweightedcp import NormalizedConformalRegression
 import json
 import os

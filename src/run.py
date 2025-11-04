@@ -206,7 +206,7 @@ def run_inference():
     d = probe_emb.shape[-1]
     
     # Create memmap (float16 to save space); optional L2 normalize later
-    emb_map = open_memmap(Config.HIDDEN_OUT, mode='w+', dtype=np.float16, shape=(N, D))
+    emb_map = open_memmap(Config.HIDDEN_OUT, mode='w+', dtype=np.float16, shape=(N, d))
 
     write_cursor = 0
     del probe_inputs, probe_emb
@@ -296,10 +296,12 @@ def run_inference():
                         # NEW: row index to align with embedding file
                         "row_index": write_cursor + j
                     }
-                    if getattr(Config, "SAVE_VALENCE", False):
-                        v = parse_first_float_0_1(response)
-                        if v is not None:
-                            rec["valence"] = float(v)
+                    #if regression, parse valence
+                    if Config.DS_TYPE == "regression" or Config.DS_TYPE == "local_regression" or Config.DS_TYPE == "weighted_regression":
+                        if getattr(Config, "SAVE_VALENCE", False):
+                            v = parse_first_float_0_1(response)
+                            if v is not None:
+                                rec["valence"] = float(v)
 
                     if results_written < 5:
                         print(f"First result data: {rec}")
@@ -380,17 +382,25 @@ def run_conformal_prediction():
     # L2-normalize for cosine geometry
     X_cal = l2norm_rows(X_cal)
     X_test = l2norm_rows(X_test)
-
+    # if is regression, parse numeric values
+    if dataset_type in Config.TASK_TYPES['regression'] or dataset_type in Config.TASK_TYPES['local_regression'] or dataset_type in Config.TASK_TYPES['weighted_regression']:
     # Parse numeric centers (valence) once; make sure they exist in your JSONL
-    center_calibration = np.array([r.get("valence", None) for r in results[:calibration_size]], dtype=float)
-    center_test = np.array([r.get("valence", None) for r in results[calibration_size:]], dtype=float)
-    if np.any(np.isnan(center_calibration)) or np.any(np.isnan(center_test)):
-        raise ValueError("Missing numeric 'valence' in results. Save it during inference or parse it here.")
+        center_calibration = np.array([r.get("valence", None) for r in results[:calibration_size]], dtype=float)
+        center_test = np.array([r.get("valence", None) for r in results[calibration_size:]], dtype=float)
+        if np.any(np.isnan(center_calibration)) or np.any(np.isnan(center_test)):
+            raise ValueError("Missing numeric 'valence' in results. Save it during inference or parse it here.")
+        m_cal = np.asarray(center_calibration, dtype=np.float32)
+        m_test = np.asarray(center_test, dtype=np.float32)
+            # 1) Basic counts
+        print("n_cal:", len(X_cal), "n_test:", len(X_test))
 
-    y_cal = np.asarray(true_calibration, dtype=np.float32)
-    y_test = np.asarray(true_test, dtype=np.float32)
-    m_cal = np.asarray(center_calibration, dtype=np.float32)
-    m_test = np.asarray(center_test, dtype=np.float32)
+        # 2) Residual stats on calibration
+        r_cal = np.abs(y_cal - m_cal)
+        print("r_cal: mean,median,std,min,max", r_cal.mean(), np.median(r_cal), r_cal.std(), r_cal.min(), r_cal.max())
+        y_cal = np.asarray(true_calibration, dtype=np.float32)
+        y_test = np.asarray(true_test, dtype=np.float32)
+    
+    
 
     # For classification branches you had; left as-is
     if dataset_type in Config.TASK_TYPES['ordinal_classification'] or dataset_type in Config.TASK_TYPES['multiclass_classification']:
@@ -398,12 +408,6 @@ def run_conformal_prediction():
         true_calibration, pred_calibration, probs_calibration = tuples_calibration
         tuples_test = get_prediction_touples(true_test, pred_test, probs_test, dataset_type)
         true_test, pred_test, probs_test = tuples_test
-    # 1) Basic counts
-    print("n_cal:", len(X_cal), "n_test:", len(X_test))
-
-    # 2) Residual stats on calibration
-    r_cal = np.abs(y_cal - m_cal)
-    print("r_cal: mean,median,std,min,max", r_cal.mean(), np.median(r_cal), r_cal.std(), r_cal.min(), r_cal.max())
 
    
     # --- Conformal prediction ---
@@ -439,12 +443,12 @@ if __name__ == "__main__":
         #"TDT", 
         #"SST5",
         #"V-oc",  
-        "EI-reg", 
-        "V-reg", 
-        "V-A,V-M,V-NYT,V-T", 
-        "Emobank", 
-        "SST", 
-        #"GoEmotions", 
+        #"EI-reg", 
+        #"V-reg", 
+        #"V-A,V-M,V-NYT,V-T", 
+        #"Emobank", 
+        #"SST", 
+        "GoEmotions", 
         #"E-c"
     ]   
     for model_name in model_names:
