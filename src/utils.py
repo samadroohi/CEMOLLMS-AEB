@@ -230,60 +230,52 @@ def cleaning_results(results,ds_type):
         raise ValueError(f"Unknown dataset type: {ds_type}")
 
 
-def save_cp_results(dataset_type, input_test, true_test, pred_test, probs_test, conformal_results, alpha):
-    path = Config.CONFORMAL_RESULTS_FILE
+def convert_to_serializable(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.floating, np.integer)):
+        return obj.item()
+    if isinstance(obj, (list, tuple)):
+        return [convert_to_serializable(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    return obj
+
+
+def build_cp_result_record(dataset_type, true_test, pred_test, probs_test, conformal_results, alpha, repeat_index, mode=None, seed=None):
+    prediction_sets = conformal_results[0]
+    return {
+        "dataset_type": dataset_type,
+        "mode": mode,
+        "repeat_index": int(repeat_index),
+        "seed": int(seed) if seed is not None else None,
+        "alpha": float(alpha),
+        "coverage": convert_to_serializable(conformal_results[1]),
+        "interval_size": convert_to_serializable(conformal_results[2]),
+        "true_values": convert_to_serializable(true_test),
+        "predictions": convert_to_serializable(pred_test),
+        "probs": convert_to_serializable(probs_test),
+        "prediction_sets": convert_to_serializable(prediction_sets),
+    }
+
+
+def save_cp_results(path, records):
+    if not records:
+        print(f"No conformal prediction results captured for path: {path}")
+        return
+
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    
-    # Helper function to safely convert numpy arrays and values
-    def convert_to_serializable(obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, (np.floating, np.integer)):
-            return float(obj)
-        elif isinstance(obj, (list, tuple)):
-            return [convert_to_serializable(item) for item in obj]
-        elif isinstance(obj, dict):
-            return {k: convert_to_serializable(v) for k, v in obj.items()}
-        return obj
+    dataset_type = records[0].get("dataset_type")
+    payload = {
+        "dataset_type": dataset_type,
+        "num_records": len(records),
+        "results": records,
+    }
 
-    try:
-        # For the first alpha value (0.1), start fresh by clearing existing results
-        if alpha == Config.CP_ALPHA[0]:
-            existing_results = {}
-        else:
-            # For subsequent alpha values, load existing results
-            with open(path, 'r') as f:
-                try:
-                    existing_results = json.load(f)
-                except json.JSONDecodeError:
-                    print("Warning: Could not read existing results file. Starting fresh.")
-                    existing_results = {}
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2)
 
-        # Convert prediction_sets tuple to list first
-        prediction_sets = list(conformal_results[0]) if isinstance(conformal_results[0], tuple) else conformal_results[0]
-            
-        # Create results for current alpha
-        alpha_results = {
-            "ds_type": dataset_type,
-            "alpha": float(alpha),
-            "coverage": convert_to_serializable(conformal_results[1]),
-            "true_values": convert_to_serializable(true_test),
-            "predictions": convert_to_serializable(pred_test),
-            "probs": convert_to_serializable(probs_test),
-            "prediction_sets": convert_to_serializable(prediction_sets),
-            "interval_size": convert_to_serializable(conformal_results[2])
-        }
-        
-        # Add or update results for this alpha
-        existing_results[str(alpha)] = alpha_results
-        
-        # Save updated results
-        with open(path, 'w') as f:
-            json.dump(existing_results, f, indent=2)
-        print(f"Conformal Prediction Results for α={alpha} saved to: {path}")
-        
-    except Exception as e:
-        print(f"Error saving results: {e}")
+    print(f"Conformal prediction results saved to: {path}")
 
 def get_response_multiclass(generated_tokens, logits, tokenizer, ds_type):
     if ds_type == "GoEmotions" or ds_type == "E-c":

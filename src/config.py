@@ -23,6 +23,9 @@ class Config:
     VERBOSE = False
     CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
+    # number of repeat runs for stochastic models
+    NUM_REPEATS = 10
+
     # ---------- Multiclass CP settings ----------
     MULTICLASS_CP_MODE = "hybrid"  # options: "global", "mondrian", "hybrid"
     MULTICLASS_CP_MODES = ["global", "mondrian", "hybrid"]
@@ -30,7 +33,9 @@ class Config:
 
     # dataset selection
     DS_TYPE = None
-    CALIBRATION_RATE = 0.1
+    TRAIN_SET_SIZE = 0.6
+    CALIBRATION_SET_SIZE = 0.2
+    TEST_SET_SIZE = 0.2
 
     # ---------- Generation settings ----------
     BATCH_SIZE = 8

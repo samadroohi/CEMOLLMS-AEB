@@ -1,4 +1,5 @@
 import os
+from collections import defaultdict
 
 from sklearn.preprocessing import scale
 from config import Config
@@ -351,111 +352,148 @@ def run_conformal_prediction():
     dataset_type = Config.DS_TYPE
     Config.update_paths()
 
+    aggregated_results_by_path = defaultdict(list)
+
     # Load & filter results
     with open(Config.RESULTS_FILE, 'r', encoding="utf-8") as read_f:
         all_rows = [json.loads(line) for line in read_f]
     results = [r for r in all_rows if r["ds_type"] == dataset_type]
 
-    # Clean/shuffle/split (your function)
+    # Clean results before repeated resampling
     results = cleaning_results(results, dataset_type)
-    random.shuffle(results)
-    calibration_size = int(len(results) * Config.CALIBRATION_RATE)
+    num_samples = len(results)
+    train_size = int(num_samples * Config.TRAIN_SET_SIZE)
+    calibration_size = int(num_samples * Config.CALIBRATION_SET_SIZE)
+    allocated = train_size + calibration_size
+    test_size = max(0, num_samples - allocated)
+    if allocated + test_size != num_samples:
+        test_size = num_samples - allocated
 
     # --- Load embeddings robustly (works for .npy or raw) ---
     E, N, D = load_embeddings_any(Config.HIDDEN_OUT, results, dtype=np.float16)
 
-    # Build lists
-    true_calibration = [r["true_value"] for r in results[:calibration_size]]
-    pred_calibration = [r["prediction"] for r in results[:calibration_size]]
-    probs_calibration = [r["probs"] for r in results[:calibration_size]]
-    idx_calibration  = [r["row_index"] for r in results[:calibration_size]]
-
-    input_test = [r["input"] for r in results[calibration_size:]]
-    true_test  = [r["true_value"] for r in results[calibration_size:]]
-    pred_test  = [r["prediction"] for r in results[calibration_size:]]
-    probs_test = [r["probs"] for r in results[calibration_size:]]
-    idx_test   = [r["row_index"] for r in results[calibration_size:]]
-
-    # Pull embeddings for cal/test
-    X_cal = np.stack([E[i].astype(np.float32) for i in idx_calibration], axis=0)
-    X_test = np.stack([E[i].astype(np.float32) for i in idx_test], axis=0)
-
-    # L2-normalize for cosine geometry
-    X_cal = l2norm_rows(X_cal)
-    X_test = l2norm_rows(X_test)
-    # if is regression, parse numeric values
-    if dataset_type in Config.TASK_TYPES['regression'] or dataset_type in Config.TASK_TYPES['local_regression'] or dataset_type in Config.TASK_TYPES['weighted_regression']:
-    # Parse numeric centers (valence) once; make sure they exist in your JSONL
-        center_calibration = np.array([r.get("valence", None) for r in results[:calibration_size]], dtype=float)
-        center_test = np.array([r.get("valence", None) for r in results[calibration_size:]], dtype=float)
-        if np.any(np.isnan(center_calibration)) or np.any(np.isnan(center_test)):
-            raise ValueError("Missing numeric 'valence' in results. Save it during inference or parse it here.")
-        m_cal = np.asarray(center_calibration, dtype=np.float32)
-        m_test = np.asarray(center_test, dtype=np.float32)
-            # 1) Basic counts
-        print("n_cal:", len(X_cal), "n_test:", len(X_test))
-
-        # 2) Residual stats on calibration
-        r_cal = np.abs(y_cal - m_cal)
-        print("r_cal: mean,median,std,min,max", r_cal.mean(), np.median(r_cal), r_cal.std(), r_cal.min(), r_cal.max())
-        y_cal = np.asarray(true_calibration, dtype=np.float32)
-        y_test = np.asarray(true_test, dtype=np.float32)
-    
-    
-
-    # For classification branches you had; left as-is
-    if dataset_type in Config.TASK_TYPES['ordinal_classification'] or dataset_type in Config.TASK_TYPES['multiclass_classification']:
-        tuples_calibration = get_prediction_touples(true_calibration, pred_calibration, probs_calibration, dataset_type)
-        true_calibration, pred_calibration, probs_calibration = tuples_calibration
-        tuples_test = get_prediction_touples(true_test, pred_test, probs_test, dataset_type)
-        true_test, pred_test, probs_test = tuples_test
-
-   
     is_multiclass_task = dataset_type in Config.TASK_TYPES.get("multiclass_classification", [])
     original_multiclass_mode = getattr(Config, "MULTICLASS_CP_MODE", None)
     modes_to_run = Config.get_multiclass_modes() if is_multiclass_task else [original_multiclass_mode]
 
-    for mode in modes_to_run:
-        if is_multiclass_task:
-            Config.MULTICLASS_CP_MODE = mode
-            Config.update_paths()
-            print(f"\n=== Multiclass CP mode: {mode} ===")
+    for repeat_idx in range(Config.NUM_REPEATS):
+        print(f"\n--- Conformal Prediction Repeat {repeat_idx + 1} / {Config.NUM_REPEATS} ---")
+        rng = np.random.default_rng(seed=Config.SEED + repeat_idx)
+        shuffled_results = results[:]
+        rng.shuffle(shuffled_results)
 
-        for alpha in Config.CP_ALPHA:
-            matched_type = False
-            for ttype in Config.TASK_TYPES:
-                if Config.DS_TYPE in Config.TASK_TYPES[ttype]:
-                    matched_type = True
-                    baseline_cp = get_predictor(ttype, alpha)
-                    if ttype == "weighted_regression" or ttype == "local_regression":
-                        # TBD: Use local clustered CP
-                        pass
-                    else:
-                        q_hat = baseline_cp.fit(true_calibration, pred_calibration, probs_calibration, alpha)
-                        conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, probs_test, q_hat)
+        train_split = shuffled_results[:train_size]
+        calibration_split = shuffled_results[train_size:train_size + calibration_size]
+        test_split = shuffled_results[train_size + calibration_size:]
 
-                        if hasattr(baseline_cp, "_empty_prob_calibration") and hasattr(baseline_cp, "_empty_prob_test"):
-                            empty_cal = getattr(baseline_cp, "_empty_prob_calibration", 0)
-                            empty_test = getattr(baseline_cp, "_empty_prob_test", 0)
-                            if empty_cal or empty_test:
-                                print(
-                                    f"Warning: skipped {empty_cal} calibration and {empty_test} test samples with empty probability vectors."
-                                )
+        input_train = [r["input"] for r in train_split]
+        true_train = [r["true_value"] for r in train_split]
+        pred_train = [r["prediction"] for r in train_split]
+        probs_train = [r["probs"] for r in train_split]
+        idx_train = [r["row_index"] for r in train_split]
 
-                        print(
-                            f" Task: {ttype} Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}"
-                        )
-                        save_cp_results(
-                            dataset_type,
-                            input_test,
-                            true_test,
-                            pred_test,
-                            probs_test,
-                            conformal_results,
-                            alpha,
-                        )
-            if not matched_type:
-                print(f"Dataset type {Config.DS_TYPE} not found in TASK_TYPES; skipping conformal prediction.")
+        true_calibration = [r["true_value"] for r in calibration_split]
+        pred_calibration = [r["prediction"] for r in calibration_split]
+        probs_calibration = [r["probs"] for r in calibration_split]
+        idx_calibration = [r["row_index"] for r in calibration_split]
+
+        input_test = [r["input"] for r in test_split]
+        true_test = [r["true_value"] for r in test_split]
+        pred_test = [r["prediction"] for r in test_split]
+        probs_test = [r["probs"] for r in test_split]
+        idx_test = [r["row_index"] for r in test_split]
+
+        if idx_train:
+            X_train = np.stack([E[i].astype(np.float32) for i in idx_train], axis=0)
+            X_train = l2norm_rows(X_train)
+        else:
+            X_train = np.empty((0, D), dtype=np.float32)
+
+        if idx_calibration:
+            X_cal = np.stack([E[i].astype(np.float32) for i in idx_calibration], axis=0)
+            X_cal = l2norm_rows(X_cal)
+        else:
+            X_cal = np.empty((0, D), dtype=np.float32)
+
+        if idx_test:
+            X_test = np.stack([E[i].astype(np.float32) for i in idx_test], axis=0)
+            X_test = l2norm_rows(X_test)
+        else:
+            X_test = np.empty((0, D), dtype=np.float32)
+
+        if dataset_type in Config.TASK_TYPES['regression'] or dataset_type in Config.TASK_TYPES['local_regression'] or dataset_type in Config.TASK_TYPES['weighted_regression']:
+            center_train = np.array([r.get("valence", None) for r in train_split], dtype=float)
+            center_calibration = np.array([r.get("valence", None) for r in calibration_split], dtype=float)
+            center_test = np.array([r.get("valence", None) for r in test_split], dtype=float)
+            if (
+                np.any(np.isnan(center_train))
+                or np.any(np.isnan(center_calibration))
+                or np.any(np.isnan(center_test))
+            ):
+                raise ValueError("Missing numeric 'valence' in results. Save it during inference or parse it here.")
+            m_train = np.asarray(center_train, dtype=np.float32)
+            m_cal = np.asarray(center_calibration, dtype=np.float32)
+            m_test = np.asarray(center_test, dtype=np.float32)
+            print("n_train:", len(X_train), "n_cal:", len(X_cal), "n_test:", len(X_test))
+            r_cal = np.abs(np.asarray(true_calibration, dtype=np.float32) - m_cal)
+            print("r_cal: mean,median,std,min,max", r_cal.mean(), np.median(r_cal), r_cal.std(), r_cal.min(), r_cal.max())
+            y_train = np.asarray(true_train, dtype=np.float32)
+            y_cal = np.asarray(true_calibration, dtype=np.float32)
+            y_test = np.asarray(true_test, dtype=np.float32)
+
+        if dataset_type in Config.TASK_TYPES['ordinal_classification'] or dataset_type in Config.TASK_TYPES['multiclass_classification']:
+            true_train, pred_train, probs_train = get_prediction_touples(true_train, pred_train, probs_train, dataset_type)
+            true_calibration, pred_calibration, probs_calibration = get_prediction_touples(true_calibration, pred_calibration, probs_calibration, dataset_type)
+            true_test, pred_test, probs_test = get_prediction_touples(true_test, pred_test, probs_test, dataset_type)
+
+        for mode in modes_to_run:
+            if is_multiclass_task:
+                Config.MULTICLASS_CP_MODE = mode
+                Config.update_paths()
+                print(f"\n=== Multiclass CP mode: {mode} ===")
+
+            for alpha in Config.CP_ALPHA:
+                matched_type = False
+                for ttype in Config.TASK_TYPES:
+                    if Config.DS_TYPE in Config.TASK_TYPES[ttype]:
+                        matched_type = True
+                        baseline_cp = get_predictor(ttype, alpha)
+                        if ttype == "weighted_regression" or ttype == "local_regression":
+                            # TBD: Use local clustered CP
+                            pass
+                        else:
+                            q_hat = baseline_cp.fit(true_calibration, pred_calibration, probs_calibration, alpha)
+                            conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, probs_test, q_hat)
+
+                            if hasattr(baseline_cp, "_empty_prob_calibration") and hasattr(baseline_cp, "_empty_prob_test"):
+                                empty_cal = getattr(baseline_cp, "_empty_prob_calibration", 0)
+                                empty_test = getattr(baseline_cp, "_empty_prob_test", 0)
+                                if empty_cal or empty_test:
+                                    print(
+                                        f"Warning: skipped {empty_cal} calibration and {empty_test} test samples with empty probability vectors."
+                                    )
+
+                            print(
+                                f" Task: {ttype} Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}"
+                            )
+                            record = build_cp_result_record(
+                                dataset_type,
+                                true_test,
+                                pred_test,
+                                probs_test,
+                                conformal_results,
+                                alpha,
+                                repeat_idx,
+                                mode=mode if is_multiclass_task else None,
+                                seed=Config.SEED + repeat_idx,
+                            )
+                            result_path = Config.CONFORMAL_RESULTS_FILE
+                            aggregated_results_by_path[result_path].append(record)
+                if not matched_type:
+                    print(f"Dataset type {Config.DS_TYPE} not found in TASK_TYPES; skipping conformal prediction.")
+
+    for path, records in aggregated_results_by_path.items():
+        save_cp_results(path, records)
 
     if is_multiclass_task:
         Config.MULTICLASS_CP_MODE = original_multiclass_mode
