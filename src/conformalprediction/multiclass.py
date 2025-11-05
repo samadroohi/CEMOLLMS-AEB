@@ -148,10 +148,8 @@ class MulticlassConformalPredictor(BaseConformalPredictor):
                     m_c = len(cls_scores)
                     lam = self.rare_shrink_tau / (m_c + self.rare_shrink_tau)
                     q_cls = float(lam * self.q_hat_global + (1.0 - lam) * q_cls)
-            elif self.mode == "mondrian" and self.rare_shrink_tau > 0.0:
-                m_c = len(cls_scores)
-                lam = self.rare_shrink_tau / (m_c + self.rare_shrink_tau)
-                q_cls = float(lam * self.q_hat_global + (1.0 - lam) * q_cls)
+            # Mondrian mode retains per-class quantiles without shrinkage; if a class has
+            # no calibration support, the earlier fallback keeps the global estimate.
 
             q_per_class[cls_idx] = q_cls
 

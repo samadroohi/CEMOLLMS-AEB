@@ -1,417 +1,302 @@
 #!/usr/bin/env python3
-"""
-Comprehensive calibration analysis for emotion analysis models.
-Shows how well-calibrated models are for each dataset.
-"""
+"""Repeat-aware calibration analysis for conformal prediction outputs."""
+
+from __future__ import annotations
 
 import json
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+import math
+import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, Iterable, List, Optional
+
+import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional
-from sklearn.calibration import calibration_curve
-from sklearn.metrics import brier_score_loss
-import warnings
-warnings.filterwarnings('ignore')
+from scipy import stats
+from sklearn.metrics import accuracy_score
 
-# Set style for presentation
-plt.style.use('seaborn-v0_8-whitegrid')
-sns.set_palette("Set2")
 
+REPO_ROOT = Path(__file__).resolve().parent
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.append(str(SRC_ROOT))
+
+from config import Config  # noqa: E402
+from analysis.analysis_utils import get_performance_metrics  # noqa: E402
+
+
+@dataclass
 class CalibrationAnalyzer:
-    def __init__(self, results_dir: str = "results/responses"):
-        self.results_dir = Path(results_dir)
-        self.datasets = ["EI-reg", "V-reg", "SST", "V-A,V-M,V-NYT,V-T"]
-        self.models = ["Emobloom-7b", "Emollama-7b", "Emollama-chat-13b", "Emollama-chat-7b", "Emoopt-13b"]
-        self.temp_dir = "temp_0.9"
-        
-        # Define domain ranges
-        self.dataset_info = {
-            "EI-reg": {"domain": [0, 1], "title": "EI-reg"},
-            "V-reg": {"domain": [0, 1], "title": "V-reg"},
-            "SST": {"domain": [0, 1], "title": "SST"},
-            "V-A,V-M,V-NYT,V-T": {"domain": [-4, 4], "title": "V-A,V-M,V-NYT,V-T"}
-        }
-        
-    def clean_prediction_value(self, pred_str: str) -> Optional[float]:
-        """Clean and parse prediction values."""
-        if not pred_str or pred_str == "null":
-            return None
-            
-        cleaned = str(pred_str).strip()
-        import re
-        numbers = re.findall(r'-?\d+\.?\d*', cleaned)
-        if numbers:
-            try:
-                return float(numbers[0])
-            except ValueError:
-                return None
-        return None
-    
-    def clip_predictions_to_domain(self, predictions: List[float], dataset: str) -> List[float]:
-        """Clip predictions to domain range."""
-        domain_min, domain_max = self.dataset_info[dataset]["domain"]
-        clipped_predictions = []
-        
-        for pred in predictions:
-            if pred < domain_min:
-                clipped_predictions.append(domain_min)
-            elif pred > domain_max:
-                clipped_predictions.append(domain_max)
-            else:
-                clipped_predictions.append(pred)
-                
-        return clipped_predictions
-    
-    def load_dataset_data(self, dataset: str) -> Dict[str, List[Tuple[float, float]]]:
-        """Load data for a specific dataset across all models."""
-        dataset_data = {}
-        
-        for model in self.models:
-            file_path = self.results_dir / dataset / self.temp_dir / f"{model}.json"
-            
-            if not file_path.exists():
-                continue
-                
-            true_values = []
-            predictions = []
-            
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        if line.strip():
-                            data = json.loads(line.strip())
-                            
-                            try:
-                                true_val = float(data['true_value'])
-                            except (ValueError, KeyError):
-                                continue
-                                
-                            pred_val = self.clean_prediction_value(data.get('prediction'))
-                            if pred_val is None:
-                                continue
-                                
-                            true_values.append(true_val)
-                            predictions.append(pred_val)
-                
-                if true_values and predictions:
-                    clipped_predictions = self.clip_predictions_to_domain(predictions, dataset)
-                    dataset_data[model] = list(zip(true_values, clipped_predictions))
-                    
-            except Exception as e:
-                print(f"Error loading {file_path}: {e}")
-                
-        return dataset_data
-    
-    def create_calibration_plots(self, save_path: str = "calibration_plots"):
-        """Create comprehensive calibration analysis plots."""
-        os.makedirs(save_path, exist_ok=True)
-        
-        # Create main calibration plot
-        self.create_reliability_diagrams(save_path)
-        
-        # Create calibration error analysis
-        self.create_calibration_error_analysis(save_path)
-        
-        # Create confidence vs accuracy plots
-        self.create_confidence_accuracy_plots(save_path)
-        
-        # Create calibration summary
-        self.create_calibration_summary(save_path)
-    
-    def create_reliability_diagrams(self, save_path: str):
-        """Create reliability diagrams (calibration curves) for each dataset."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        
-        for idx, dataset in enumerate(self.datasets):
-            row, col = idx // 2, idx % 2
-            ax = axes[row, col]
-            dataset_data = self.load_dataset_data(dataset)
-            
-            if not dataset_data:
-                continue
-            
-            # Plot calibration curves for each model
-            for model in self.models:
-                if model in dataset_data:
-                    model_data = dataset_data[model]
-                    true_vals, pred_vals = zip(*model_data)
-                    
-                    # Convert to numpy arrays
-                    true_array = np.array(true_vals)
-                    pred_array = np.array(pred_vals)
-                    
-                    # For regression calibration, we need to bin the data
-                    # Create bins based on prediction values
-                    n_bins = 10
-                    bin_boundaries = np.linspace(0, 1, n_bins + 1) if dataset != "V-A,V-M,V-NYT,V-T" else np.linspace(-4, 4, n_bins + 1)
-                    
-                    bin_lowers = bin_boundaries[:-1]
-                    bin_uppers = bin_boundaries[1:]
-                    
-                    bin_centers = []
-                    bin_accuracies = []
-                    bin_confidences = []
-                    
-                    for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-                        in_bin = (pred_array >= bin_lower) & (pred_array < bin_upper)
-                        prop_in_bin = in_bin.mean()
-                        
-                        if prop_in_bin > 0:
-                            bin_centers.append((bin_lower + bin_upper) / 2)
-                            bin_accuracies.append(true_array[in_bin].mean())
-                            bin_confidences.append(pred_array[in_bin].mean())
-                    
-                    if bin_centers:
-                        # Plot calibration curve
-                        markers = ['o', 's', '^', 'D', 'v']
-                        marker = markers[self.models.index(model)]
-                        
-                        ax.plot(bin_confidences, bin_accuracies, marker=marker, 
-                               label=model, linewidth=2, markersize=6, alpha=0.8)
-            
-            # Add perfect calibration line
-            domain_min, domain_max = self.dataset_info[dataset]["domain"]
-            ax.plot([domain_min, domain_max], [domain_min, domain_max], 
-                   'r--', alpha=0.8, linewidth=2, label='Perfect Calibration')
-            
-            # Set axis properties
-            ax.set_xlim(domain_min, domain_max)
-            ax.set_ylim(domain_min, domain_max)
-            ax.set_xlabel('Mean Predicted Value', fontsize=12, fontweight='bold')
-            ax.set_ylabel('Mean True Value', fontsize=12, fontweight='bold')
-            ax.set_title(f'Reliability Diagram: {self.dataset_info[dataset]["title"]}', 
-                        fontsize=12, fontweight='bold', pad=15)
-            ax.grid(True, alpha=0.3)
-            ax.legend(fontsize=8)
-        
-        # Add shared axis labels
-        fig.text(0.5, 0.02, 'Mean Predicted Value', ha='center', va='center', fontsize=14, fontweight='bold')
-        fig.text(0.02, 0.5, 'Mean True Value', ha='center', va='center', rotation='vertical', fontsize=14, fontweight='bold')
-        
-        fig.suptitle('Model Calibration: Reliability Diagrams', fontsize=16, fontweight='bold', y=0.95)
-        
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.90, bottom=0.12, left=0.08, right=0.95, hspace=0.25, wspace=0.15)
-        
-        plt.savefig(f"{save_path}/reliability_diagrams.png", dpi=300, bbox_inches='tight', facecolor='white')
-        plt.show()
-    
-    def create_calibration_error_analysis(self, save_path: str):
-        """Create calibration error analysis plots."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        
-        for idx, dataset in enumerate(self.datasets):
-            row, col = idx // 2, idx % 2
-            ax = axes[row, col]
-            dataset_data = self.load_dataset_data(dataset)
-            
-            if not dataset_data:
-                continue
-            
-            # Calculate calibration errors for each model
-            calibration_errors = []
-            model_names = []
-            
-            for model in self.models:
-                if model in dataset_data:
-                    model_data = dataset_data[model]
-                    true_vals, pred_vals = zip(*model_data)
-                    
-                    true_array = np.array(true_vals)
-                    pred_array = np.array(pred_vals)
-                    
-                    # Calculate Expected Calibration Error (ECE)
-                    n_bins = 10
-                    bin_boundaries = np.linspace(0, 1, n_bins + 1) if dataset != "V-A,V-M,V-NYT,V-T" else np.linspace(-4, 4, n_bins + 1)
-                    
-                    ece = 0
-                    for i in range(n_bins):
-                        bin_lower = bin_boundaries[i]
-                        bin_upper = bin_boundaries[i + 1]
-                        
-                        in_bin = (pred_array >= bin_lower) & (pred_array < bin_upper)
-                        prop_in_bin = in_bin.mean()
-                        
-                        if prop_in_bin > 0:
-                            accuracy_in_bin = true_array[in_bin].mean()
-                            avg_confidence_in_bin = pred_array[in_bin].mean()
-                            ece += np.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-                    
-                    calibration_errors.append(ece)
-                    model_names.append(model)
-            
-            # Create bar plot of calibration errors
-            bars = ax.bar(range(len(model_names)), calibration_errors, alpha=0.7)
-            ax.set_xticks(range(len(model_names)))
-            ax.set_xticklabels([name.split('-')[0] for name in model_names], rotation=45)
-            ax.set_ylabel('Expected Calibration Error (ECE)', fontsize=12, fontweight='bold')
-            ax.set_title(f'Calibration Error: {self.dataset_info[dataset]["title"]}', 
-                        fontsize=12, fontweight='bold', pad=15)
-            ax.grid(True, alpha=0.3)
-            
-            # Color bars based on error level
-            for i, bar in enumerate(bars):
-                if calibration_errors[i] < 0.05:
-                    bar.set_color('green')
-                elif calibration_errors[i] < 0.1:
-                    bar.set_color('orange')
-                else:
-                    bar.set_color('red')
-        
-        fig.suptitle('Model Calibration Error Analysis', fontsize=16, fontweight='bold', y=0.95)
-        
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.90, bottom=0.15, left=0.08, right=0.95, hspace=0.25, wspace=0.15)
-        
-        plt.savefig(f"{save_path}/calibration_errors.png", dpi=300, bbox_inches='tight', facecolor='white')
-        plt.show()
-    
-    def create_confidence_accuracy_plots(self, save_path: str):
-        """Create confidence vs accuracy plots."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        
-        for idx, dataset in enumerate(self.datasets):
-            row, col = idx // 2, idx % 2
-            ax = axes[row, col]
-            dataset_data = self.load_dataset_data(dataset)
-            
-            if not dataset_data:
-                continue
-            
-            # Plot confidence vs accuracy for each model
-            for model in self.models:
-                if model in dataset_data:
-                    model_data = dataset_data[model]
-                    true_vals, pred_vals = zip(*model_data)
-                    
-                    true_array = np.array(true_vals)
-                    pred_array = np.array(pred_vals)
-                    
-                    # Calculate confidence (prediction magnitude) and accuracy (how close to true value)
-                    confidence = np.abs(pred_array)
-                    accuracy = 1 - np.abs(true_array - pred_array) / (np.max(true_array) - np.min(true_array))
-                    
-                    # Create scatter plot
-                    markers = ['o', 's', '^', 'D', 'v']
-                    marker = markers[self.models.index(model)]
-                    
-                    ax.scatter(confidence, accuracy, alpha=0.6, s=20, 
-                             label=model, marker=marker, edgecolors='white', linewidth=0.3)
-            
-            ax.set_xlabel('Confidence (|Prediction|)', fontsize=12, fontweight='bold')
-            ax.set_ylabel('Accuracy (1 - |Error|/Range)', fontsize=12, fontweight='bold')
-            ax.set_title(f'Confidence vs Accuracy: {self.dataset_info[dataset]["title"]}', 
-                        fontsize=12, fontweight='bold', pad=15)
-            ax.grid(True, alpha=0.3)
-            ax.legend(fontsize=8)
-        
-        fig.suptitle('Model Confidence vs Accuracy Analysis', fontsize=16, fontweight='bold', y=0.95)
-        
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.90, bottom=0.12, left=0.08, right=0.95, hspace=0.25, wspace=0.15)
-        
-        plt.savefig(f"{save_path}/confidence_accuracy.png", dpi=300, bbox_inches='tight', facecolor='white')
-        plt.show()
-    
-    def create_calibration_summary(self, save_path: str):
-        """Create calibration summary statistics."""
-        summary_data = []
-        
-        for dataset in self.datasets:
-            dataset_data = self.load_dataset_data(dataset)
-            
-            for model in self.models:
-                if model in dataset_data:
-                    model_data = dataset_data[model]
-                    true_vals, pred_vals = zip(*model_data)
-                    
-                    true_array = np.array(true_vals)
-                    pred_array = np.array(pred_vals)
-                    
-                    # Calculate calibration metrics
-                    n_bins = 10
-                    bin_boundaries = np.linspace(0, 1, n_bins + 1) if dataset != "V-A,V-M,V-NYT,V-T" else np.linspace(-4, 4, n_bins + 1)
-                    
-                    ece = 0
-                    mce = 0
-                    for i in range(n_bins):
-                        bin_lower = bin_boundaries[i]
-                        bin_upper = bin_boundaries[i + 1]
-                        
-                        in_bin = (pred_array >= bin_lower) & (pred_array < bin_upper)
-                        prop_in_bin = in_bin.mean()
-                        
-                        if prop_in_bin > 0:
-                            accuracy_in_bin = true_array[in_bin].mean()
-                            avg_confidence_in_bin = pred_array[in_bin].mean()
-                            bin_error = np.abs(avg_confidence_in_bin - accuracy_in_bin)
-                            
-                            ece += bin_error * prop_in_bin
-                            mce = max(mce, bin_error)
-                    
-                    # Calculate Brier Score (for regression, we use MSE)
-                    brier_score = np.mean((true_array - pred_array) ** 2)
-                    
-                    summary_data.append({
-                        'Dataset': dataset,
-                        'Model': model,
-                        'ECE': ece,
-                        'MCE': mce,
-                        'Brier_Score': brier_score,
-                        'Samples': len(true_array)
-                    })
-        
-        # Create summary DataFrame
-        df = pd.DataFrame(summary_data)
-        
-        # Create heatmap of calibration errors
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-        
-        # ECE heatmap
-        pivot_ece = df.pivot(index='Model', columns='Dataset', values='ECE')
-        sns.heatmap(pivot_ece, annot=True, fmt='.4f', cmap='RdYlGn_r', 
-                   ax=axes[0], cbar_kws={'label': 'Expected Calibration Error'})
-        axes[0].set_title('Expected Calibration Error (ECE) by Model and Dataset', fontsize=14, fontweight='bold')
-        axes[0].set_xlabel('Dataset', fontsize=12, fontweight='bold')
-        axes[0].set_ylabel('Model', fontsize=12, fontweight='bold')
-        
-        # MCE heatmap
-        pivot_mce = df.pivot(index='Model', columns='Dataset', values='MCE')
-        sns.heatmap(pivot_mce, annot=True, fmt='.4f', cmap='RdYlGn_r', 
-                   ax=axes[1], cbar_kws={'label': 'Maximum Calibration Error'})
-        axes[1].set_title('Maximum Calibration Error (MCE) by Model and Dataset', fontsize=14, fontweight='bold')
-        axes[1].set_xlabel('Dataset', fontsize=12, fontweight='bold')
-        axes[1].set_ylabel('Model', fontsize=12, fontweight='bold')
-        
-        plt.suptitle('Model Calibration Summary', fontsize=16, fontweight='bold', y=1.02)
-        
-        plt.tight_layout()
-        plt.savefig(f"{save_path}/calibration_summary.png", dpi=300, bbox_inches='tight', facecolor='white')
-        plt.show()
-        
-        # Save detailed results
-        df.to_csv(f"{save_path}/calibration_metrics.csv", index=False)
-        print(f"Calibration analysis complete! Results saved to {save_path}")
-        print("\nCalibration Metrics Summary:")
-        print("=" * 60)
-        print(df[['Dataset', 'Model', 'ECE', 'MCE', 'Brier_Score']].to_string(index=False))
-        
-        return df
+    """Aggregate calibration metrics across repeated conformal runs."""
 
-def main():
-    """Main function to run calibration analysis."""
+    conformal_dir: Path = REPO_ROOT / "results" / "conformal_results"
+    temp_dir: str = "temp_0.9"
+    output_dir: Path = REPO_ROOT / "analysis_output" / "calibration"
+    confidence: float = 0.95
+
+    def __post_init__(self) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.task_types = Config.TASK_TYPES
+
+    def run(self) -> None:
+        alpha_records, repeat_records = self._collect_records()
+
+        if alpha_records.empty and repeat_records.empty:
+            print("No conformal results found. Exiting.")
+            return
+
+        if not alpha_records.empty:
+            alpha_records.to_csv(self.output_dir / "calibration_alpha_records.csv", index=False)
+            alpha_summary = self._summarize_alpha_metrics(alpha_records)
+            alpha_summary.to_csv(self.output_dir / "calibration_alpha_summary.csv", index=False)
+            print(f"Saved per-alpha records and summary to {self.output_dir}")
+
+        if not repeat_records.empty:
+            repeat_records.to_csv(self.output_dir / "calibration_repeat_records.csv", index=False)
+            repeat_summary = self._summarize_repeat_metrics(repeat_records)
+            repeat_summary.to_csv(self.output_dir / "calibration_repeat_summary.csv", index=False)
+            print(f"Saved per-repeat records and summary to {self.output_dir}")
+
+    # ------------------------------------------------------------------
+    # Data extraction
+    # ------------------------------------------------------------------
+    def _collect_records(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        alpha_rows: List[Dict[str, float]] = []
+        repeat_rows: List[Dict[str, float]] = []
+
+        for dataset_dir in sorted(self.conformal_dir.iterdir()):
+            if not dataset_dir.is_dir():
+                continue
+            dataset = dataset_dir.name
+            temp_path = dataset_dir / self.temp_dir
+            if not temp_path.exists():
+                continue
+
+            for json_path in sorted(temp_path.glob("*.json")):
+                model = json_path.stem.split("__", 1)[0]
+                payload = self._safe_load_json(json_path)
+                if not payload:
+                    continue
+
+                mode_records: Dict[int, List[Dict]] = {}
+                for record in payload.get("results", []):
+                    repeat_idx = int(record.get("repeat_index", 0))
+                    mode = record.get("mode") or self._infer_mode(json_path)
+                    record["__mode"] = mode
+                    mode_records.setdefault(repeat_idx, []).append(record)
+
+                for repeat_idx, records in mode_records.items():
+                    if not records:
+                        continue
+                    records_sorted = sorted(records, key=lambda r: float(r.get("alpha", 0)))
+                    coverage_errors: List[float] = []
+
+                    for record in records_sorted:
+                        alpha = float(record.get("alpha"))
+                        coverage = float(record.get("coverage"))
+                        interval_size = float(record.get("interval_size"))
+                        mode = record["__mode"]
+                        coverage_error = abs(coverage - (1.0 - alpha))
+                        alpha_rows.append(
+                            {
+                                "dataset": dataset,
+                                "model": model,
+                                "mode": mode,
+                                "alpha": alpha,
+                                "repeat_index": repeat_idx,
+                                "coverage": coverage,
+                                "interval_size": interval_size,
+                                "ece": coverage_error,
+                            }
+                        )
+                        coverage_errors.append(coverage_error)
+
+                    ace_value = float(np.mean(coverage_errors)) if coverage_errors else np.nan
+                    metrics_record = records_sorted[0]
+                    repeat_metrics = self._compute_repeat_metrics(dataset, metrics_record)
+                    repeat_rows.append(
+                        {
+                            "dataset": dataset,
+                            "model": model,
+                            "mode": records_sorted[0]["__mode"],
+                            "repeat_index": repeat_idx,
+                            "accuracy": repeat_metrics.get("accuracy"),
+                            "f1_micro": repeat_metrics.get("f1_micro"),
+                            "f1_macro": repeat_metrics.get("f1_macro"),
+                            "pcc": repeat_metrics.get("pcc"),
+                            "ace": ace_value,
+                        }
+                    )
+
+        alpha_df = pd.DataFrame(alpha_rows)
+        repeat_df = pd.DataFrame(repeat_rows)
+        return alpha_df, repeat_df
+
+    # ------------------------------------------------------------------
+    # Metric computation
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _safe_load_json(path: Path) -> Optional[Dict]:
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Skipping {path}: {exc}")
+            return None
+
+    @staticmethod
+    def _infer_mode(path: Path) -> str:
+        stem = path.stem
+        if "__" in stem:
+            return stem.split("__", 1)[1]
+        return "default"
+
+    def _compute_repeat_metrics(self, dataset: str, record: Dict) -> Dict[str, Optional[float]]:
+        payload = {
+            "ds_type": dataset,
+            "true_values": record.get("true_values", []),
+            "predictions": record.get("predictions", []),
+            "probs": record.get("probs", []),
+            "prediction_sets": record.get("prediction_sets", []),
+        }
+
+        try:
+            raw_metrics = get_performance_metrics(payload, dataset, self.task_types)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Metric computation failed for {dataset}: {exc}")
+            raw_metrics = {}
+
+        metrics: Dict[str, Optional[float]] = {
+            "accuracy": np.nan,
+            "f1_micro": np.nan,
+            "f1_macro": np.nan,
+            "pcc": np.nan,
+        }
+
+        if dataset in self.task_types.get("regression", []):
+            metrics["pcc"] = raw_metrics.get("pearson_correlation")
+
+        elif dataset in self.task_types.get("ordinal_classification", []):
+            metrics["accuracy"] = raw_metrics.get("accuracy")
+            metrics["f1_micro"] = raw_metrics.get("micro_f1")
+            metrics["f1_macro"] = raw_metrics.get("macro_f1")
+            metrics["pcc"] = raw_metrics.get("average_pearson")
+
+        elif dataset in self.task_types.get("multiclass_classification", []):
+            metrics["f1_micro"] = raw_metrics.get("f1_micro")
+            metrics["f1_macro"] = raw_metrics.get("f1_macro")
+            metrics["accuracy"] = self._multilabel_subset_accuracy(
+                payload["true_values"], payload["predictions"]
+            )
+
+        return metrics
+
+    @staticmethod
+    def _multilabel_subset_accuracy(true_values: Iterable[Iterable[str]],
+                                    pred_values: Iterable[Iterable[str]]) -> Optional[float]:
+        true_list = [list(labels) for labels in true_values]
+        pred_list = [list(labels) for labels in pred_values]
+        if not true_list:
+            return None
+
+        unique_labels = sorted({label for labels in true_list + pred_list for label in labels})
+        if not unique_labels:
+            return None
+        label_to_index = {label: idx for idx, label in enumerate(unique_labels)}
+
+        def to_binary(labels: List[str]) -> np.ndarray:
+            vec = np.zeros(len(unique_labels), dtype=int)
+            for label in labels:
+                idx = label_to_index.get(label)
+                if idx is not None:
+                    vec[idx] = 1
+            return vec
+
+        y_true = np.array([to_binary(labels) for labels in true_list])
+        y_pred = np.array([to_binary(labels) for labels in pred_list])
+        if y_true.size == 0:
+            return None
+        return float(accuracy_score(y_true, y_pred))
+
+    # ------------------------------------------------------------------
+    # Summaries
+    # ------------------------------------------------------------------
+    def _summarize_alpha_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
+        summaries: List[Dict] = []
+        for metric_name in ("coverage", "interval_size", "ece"):
+            summaries.extend(
+                self._aggregate_metric(
+                    df,
+                    by_cols=["dataset", "model", "mode", "alpha"],
+                    value_col=metric_name,
+                    metric_name=metric_name,
+                )
+            )
+        return pd.DataFrame(summaries)
+
+    def _summarize_repeat_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
+        summaries: List[Dict] = []
+        for metric_name in ("accuracy", "f1_micro", "f1_macro", "pcc", "ace"):
+            summaries.extend(
+                self._aggregate_metric(
+                    df,
+                    by_cols=["dataset", "model", "mode"],
+                    value_col=metric_name,
+                    metric_name=metric_name,
+                )
+            )
+        return pd.DataFrame(summaries)
+
+    def _aggregate_metric(
+        self,
+        df: pd.DataFrame,
+        by_cols: List[str],
+        value_col: str,
+        metric_name: str,
+    ) -> List[Dict]:
+        rows: List[Dict] = []
+        if value_col not in df:
+            return rows
+
+        grouped = df.dropna(subset=[value_col]).groupby(by_cols)[value_col]
+        for keys, series in grouped:
+            series = series.dropna()
+            if series.empty:
+                continue
+
+            n = len(series)
+            mean = series.mean()
+            std = series.std(ddof=1) if n > 1 else 0.0
+            ci_half_width = self._confidence_interval(std, n)
+
+            key_tuple = keys if isinstance(keys, tuple) else (keys,)
+            row = {col: key for col, key in zip(by_cols, key_tuple)}
+            row.update(
+                {
+                    "metric": metric_name,
+                    "mean": float(mean),
+                    "std": float(std),
+                    "ci_lower": float(mean - ci_half_width),
+                    "ci_upper": float(mean + ci_half_width),
+                    "n": int(n),
+                }
+            )
+            rows.append(row)
+
+        return rows
+
+    def _confidence_interval(self, std: float, n: int) -> float:
+        if n <= 1 or std == 0:
+            return 0.0
+        sem = std / math.sqrt(n)
+        t_score = stats.t.ppf((1 + self.confidence) / 2, n - 1)
+        return float(sem * t_score)
+
+
+def main() -> None:
     analyzer = CalibrationAnalyzer()
-    
-    print("Starting calibration analysis...")
-    print("=" * 50)
-    
-    analyzer.create_calibration_plots()
-    
-    print("\nCalibration analysis complete!")
+    analyzer.run()
+
 
 if __name__ == "__main__":
     main()
