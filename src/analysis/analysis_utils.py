@@ -107,7 +107,7 @@ def analyze_multiclass_results(results, ds_type, task_types):
         unique_labels.update(labels)
     unique_labels = sorted(list(unique_labels))
     
-    # Convert to binary matrix format for F1 scores
+    # Convert to binary matrix format for multilabel metrics
     def to_binary_matrix(label_sets, unique_labels):
         matrix = np.zeros((len(label_sets), len(unique_labels)))
         for i, label_set in enumerate(label_sets):
@@ -119,14 +119,19 @@ def analyze_multiclass_results(results, ds_type, task_types):
     y_true_binary = to_binary_matrix(y_true, unique_labels)
     y_pred_binary = to_binary_matrix(y_pred, unique_labels)
     
-    # Calculate F1 scores
+    # Calculate multilabel metrics
     f1_micro = f1_score(y_true_binary, y_pred_binary, average='micro')
     f1_macro = f1_score(y_true_binary, y_pred_binary, average='macro')
+    subset_acc = accuracy_score(y_true_binary, y_pred_binary)
+    hamming = hamming_loss(y_true_binary, y_pred_binary)
     
     return {
         'jaccard_index': jaccard_index,
+        'jaccard_similarity': jaccard_index,
         'f1_micro': f1_micro,
-        'f1_macro': f1_macro
+        'f1_macro': f1_macro,
+        'subset_accuracy': subset_acc,
+        'hamming_loss': hamming
     }
 
 def analyze_ordinal_classification_results(results, ds_type, task_types):

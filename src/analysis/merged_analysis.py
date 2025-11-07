@@ -327,7 +327,7 @@ def generate_multiclass_table(all_metrics_by_dataset, datasets, output_dir):
     index = pd.Index(all_models, name="Model")
     
     # Create MultiIndex for columns (dataset, metric)
-    metrics = ["jaccard_similarity", "f1_micro", "f1_macro"]
+    metrics = ["subset_accuracy", "hamming_loss", "jaccard_similarity", "f1_micro", "f1_macro"]
     column_tuples = [(dataset, metric) for dataset in datasets for metric in metrics]
     columns = pd.MultiIndex.from_tuples(column_tuples, names=["Dataset", "Metric"])
     
@@ -346,6 +346,14 @@ def generate_multiclass_table(all_metrics_by_dataset, datasets, output_dir):
             metrics_data = all_metrics_by_dataset[dataset][model]
             
             # Extract metrics
+            if "subset_accuracy" in metrics_data:
+                df.loc[model, (dataset, "subset_accuracy")] = metrics_data["subset_accuracy"]
+            elif "accuracy" in metrics_data:
+                df.loc[model, (dataset, "subset_accuracy")] = metrics_data["accuracy"]
+
+            if "hamming_loss" in metrics_data:
+                df.loc[model, (dataset, "hamming_loss")] = metrics_data["hamming_loss"]
+
             if "jaccard_similarity" in metrics_data:
                 df.loc[model, (dataset, "jaccard_similarity")] = metrics_data["jaccard_similarity"]
             elif "jaccard_index" in metrics_data:

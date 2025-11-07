@@ -24,7 +24,7 @@ class RegressionReliabilityAnalyzer:
     def __init__(self, results_dir: str = "results/responses"):
         self.results_dir = Path(results_dir)
         self.datasets = ["EI-reg", "V-reg", "SST", "V-A,V-M,V-NYT,V-T"]
-        self.models = ["Emobloom-7b", "Emollama-7b", "Emollama-chat-13b", "Emollama-chat-7b", "Emoopt-13b"]
+        self.models = ["Emobloom-7b", "Emollama-7b", "Emollama-chat-13b", "Emoopt-13b", "Emollama-chat-7b"]
         self.temp_dir = "temp_0.9"
         
         # Define domain ranges

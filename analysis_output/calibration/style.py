@@ -11,11 +11,11 @@ FIG_WIDTH_2COL = 7.0
 GOLDEN_RATIO = 0.618  # pleasing aspect ratio
 
 # Base font sizes (approximate journal guidance)
-FONT_SIZE_BASE = 8.5
-FONT_SIZE_TITLE = 9.5
-FONT_SIZE_LEGEND = 8.0
-FONT_FAMILY_SERIF = "Times New Roman"
-FONT_FAMILY_SANS = "Arial"
+FONT_SIZE_BASE = 8
+FONT_SIZE_TITLE = 8
+FONT_SIZE_LEGEND = 6.0
+FONT_FAMILY_SERIF = "dejaVu Serif"
+FONT_FAMILY_SANS = "dejaVu Sans"
 
 # Colorblind-safe palette (Okabe-Ito)
 COLOR_PALETTE = [

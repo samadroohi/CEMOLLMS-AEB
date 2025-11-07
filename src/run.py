@@ -503,12 +503,10 @@ if __name__ == "__main__":
     analysis = False # False if you want to run inference and conformal prediction
     model_names = [
         "lzw1008/Emollama-7b",
-        #"lzw1008/Emollama-chat-7b",
-        #"lzw1008/Emollama-chat-13b",
-        #"lzw1008/Emoopt-13b",
-        #"lzw1008/Emobloom-7b",
-        #"lzw1008/Emot5-large", 
-        #"lzw1008/Emobart-large"
+        "lzw1008/Emollama-chat-7b",
+        "lzw1008/Emobloom-7b",
+        "lzw1008/Emollama-chat-13b",
+        "lzw1008/Emoopt-13b"
     ]
     dataset_names = [
         #"EI-oc", 
@@ -521,7 +519,7 @@ if __name__ == "__main__":
         #"Emobank", 
         #"SST", 
         "GoEmotions", 
-        #"E-c"
+        "E-c"
     ]   
     for model_name in model_names:
         for dataset_name in dataset_names:

@@ -19,5 +19,5 @@ configs/
 # Ignore results folder (do not sync to GitHub)
 /results/
 
-# Ignore generated calibration figures
-/analysis_output/calibration/figures/
+# Ignore generated analysis outputs
+/analysis_output/

@@ -15,14 +15,55 @@ from config import Config
 from analysis.analysis_utils import get_performance_metrics
 from analysis.visualization_utils import calibration_anlaysis
 
+
+def _alpha_key(alpha) -> str:
+    """Normalize alpha values to consistent string keys."""
+    try:
+        return format(float(alpha), ".15g")
+    except (TypeError, ValueError):
+        return str(alpha)
+
+
+def _normalize_conformal_results(payload):
+    """Collapse repeat-aware conformal payloads to legacy alpha-indexed dicts."""
+    if isinstance(payload, dict) and "results" in payload:
+        ds_type = payload.get("dataset_type", Config.DS_TYPE)
+        normalized = {}
+        for record in payload.get("results", []):
+            alpha = record.get("alpha")
+            if alpha is None:
+                continue
+            key = _alpha_key(alpha)
+            if key in normalized:
+                continue
+            normalized[key] = {
+                "ds_type": ds_type,
+                "alpha": float(alpha),
+                "coverage": record.get("coverage"),
+                "interval_size": record.get("interval_size"),
+                "true_values": record.get("true_values", []),
+                "predictions": record.get("predictions", []),
+                "probs": record.get("probs", []),
+                "prediction_sets": record.get("prediction_sets", []),
+                "mode": record.get("mode"),
+            }
+        return normalized
+    return payload
+
 def run_analysis(model_name, dataset_name):
     try:
         Config.update_model_and_dataset(model_name, dataset_name)
         # Load the single results file containing all alpha values
         with open(Config.CONFORMAL_RESULTS_FILE, 'r', encoding="utf-8") as read_f:
-            results = json.load(read_f)
+            raw_results = json.load(read_f)
 
-        performance_metrics = get_performance_metrics(results[str(Config.CP_ALPHA[0])], Config.DS_TYPE, Config.TASK_TYPES)
+        results = _normalize_conformal_results(raw_results)
+        alpha_key = _alpha_key(Config.CP_ALPHA[0])
+        if alpha_key not in results:
+            available = ", ".join(sorted(results.keys())) if isinstance(results, dict) else "<unknown>"
+            raise KeyError(f"Alpha {Config.CP_ALPHA[0]} not found in conformal results. Available keys: {available}")
+
+        performance_metrics = get_performance_metrics(results[alpha_key], Config.DS_TYPE, Config.TASK_TYPES)
         
         # Initialize these variables before the if-elif blocks
         calibration_metrics = {}
@@ -87,6 +128,8 @@ def run_analysis(model_name, dataset_name):
                 print("dataset: ", Config.DS_TYPE)
                 print("model: ", Config.MODEL_NAME_OR_PATH)
             print("\nMulticlass Classification Analysis Results:")
+            print(f"Subset Accuracy: {performance_metrics['subset_accuracy']:.4f}")
+            print(f"Hamming Loss: {performance_metrics['hamming_loss']:.4f}")
             print(f"Jaccard Index: {performance_metrics['jaccard_index']:.4f}")
             print(f"Micro-F1: {performance_metrics['f1_micro']:.4f}")
             print(f"Macro-F1: {performance_metrics['f1_macro']:.4f}")
