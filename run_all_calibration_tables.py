@@ -29,6 +29,13 @@ def main() -> None:
     print("Generating conformal tables...")
     _run_step([PYTHON, "-m", "src.analysis.generate_conformal_tables"])
 
+    print("Generating performance tables...")
+    _run_step([
+        PYTHON,
+        "-m",
+        "src.analysis.generate_performance_tables",
+    ])
+
 
 if __name__ == "__main__":
     main()
