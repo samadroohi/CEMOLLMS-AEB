@@ -5,29 +5,34 @@ from __future__ import annotations
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+try:
+    import seaborn as sns
+except ImportError:  # seaborn is optional at runtime
+    sns = None
+
 # Figure geometry in inches
 FIG_WIDTH_1COL = 3.4
 FIG_WIDTH_2COL = 7.0
 GOLDEN_RATIO = 0.618  # pleasing aspect ratio
 
 # Base font sizes (approximate journal guidance)
-FONT_SIZE_BASE = 8
-FONT_SIZE_TITLE = 8
-FONT_SIZE_LEGEND = 6.0
-FONT_FAMILY_SERIF = "dejaVu Serif"
-FONT_FAMILY_SANS = "dejaVu Sans"
+FONT_SIZE_BASE = 6
+FONT_SIZE_TITLE = 6
+FONT_SIZE_LEGEND = 5.0
+
+# Fonts — Helvetica is sans-serif
+FONT_FAMILY_SANS = "Helvetica"  # or "Helvetica Neue"
+# Provide sensible fallbacks in case Helvetica isn't available
+FONT_SANS_FALLBACKS = [FONT_FAMILY_SANS, "Arial", "DejaVu Sans"]
 
 # Colorblind-safe palette (Okabe-Ito)
 COLOR_PALETTE = [
-    "#0072B2",  # blue
-    "#D55E00",  # vermillion (orange)
-    "#009E73",  # bluish green
-    "#CC79A7",  # reddish purple
-    "#F0E442",  # yellow
-    "#56B4E9",  # sky blue
-    "#E69F00",  # orange
-    "#999999",  # grey
+    "#0072B2", "#D55E00", "#009E73", "#CC79A7",
+    "#F0E442", "#56B4E9", "#E69F00", "#999999",
 ]
+
+# Standard plot bounds for coverage metrics
+COVERAGE_Y_RANGE = (0.5, 1.0)
 
 
 def apply_publication_style(figsize_width: float = FIG_WIDTH_1COL,
@@ -39,9 +44,14 @@ def apply_publication_style(figsize_width: float = FIG_WIDTH_1COL,
             "figure.figsize": (figsize_width, figsize_width * aspect_ratio),
             "figure.dpi": dpi,
             "savefig.dpi": dpi,
-            "font.family": "serif",
-            "font.serif": [FONT_FAMILY_SERIF],
+
+            # ✅ use sans-serif family for Helvetica
+            "font.family": "sans-serif",
+            "font.sans-serif": FONT_SANS_FALLBACKS,
+
+            # Helvetica lacks math glyphs — STIX covers math well
             "mathtext.fontset": "stix",
+
             "axes.titlesize": FONT_SIZE_TITLE,
             "axes.labelsize": FONT_SIZE_BASE,
             "axes.labelweight": "semibold",
@@ -57,10 +67,42 @@ def apply_publication_style(figsize_width: float = FIG_WIDTH_1COL,
         }
     )
 
+    if sns is not None:
+        sns.set_theme(style="whitegrid")
+        sns.set_palette(COLOR_PALETTE)
+        sns.set_context(
+            "notebook",
+            rc={
+                # ✅ mirror the sans-serif setting in seaborn
+                "font.family": "sans-serif",
+                "font.sans-serif": ",".join(FONT_SANS_FALLBACKS),
+                "axes.titlesize": FONT_SIZE_TITLE,
+                "axes.labelsize": FONT_SIZE_BASE,
+                "legend.fontsize": FONT_SIZE_LEGEND,
+                "xtick.labelsize": FONT_SIZE_BASE,
+                "ytick.labelsize": FONT_SIZE_BASE,
+            },
+        )
+
 
 def new_figure(width: float = FIG_WIDTH_1COL,
                aspect_ratio: float = GOLDEN_RATIO,
-               dpi: int = 300) -> plt.Figure:
+               dpi: int = 300) -> tuple[plt.Figure, plt.Axes]:
     apply_publication_style(width, aspect_ratio, dpi)
     fig, ax = plt.subplots()
-    return fig
+    return fig, ax
+
+
+def styled_subplots(width: float = FIG_WIDTH_1COL,
+                    height: float | None = None,
+                    aspect_ratio: float = GOLDEN_RATIO,
+                    dpi: int = 300,
+                    **kwargs):
+    """Create subplots with the shared publication style applied."""
+    if height is None:
+        height = width * aspect_ratio
+    else:
+        aspect_ratio = height / width if width else aspect_ratio
+    apply_publication_style(width, aspect_ratio, dpi)
+    kwargs.setdefault("figsize", (width, height))
+    return plt.subplots(**kwargs)

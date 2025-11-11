@@ -16,6 +16,7 @@ from matplotlib.ticker import MultipleLocator
 
 from analysis_output.calibration.style import (
     FIG_WIDTH_2COL,
+    COVERAGE_Y_RANGE,
     apply_publication_style,
 )
 
@@ -212,7 +213,7 @@ def _plot_model_ax(ax, df: pd.DataFrame, model: str, dataset: str) -> None:
 
     ax.set_title(model, fontsize=9)
     ax.set_xlim(0.5, 1.01)
-    ax.set_ylim(0.5, 1.01)
+    ax.set_ylim(*COVERAGE_Y_RANGE)
     ax.grid(True, alpha=0.25)
 
 

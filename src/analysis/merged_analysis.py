@@ -14,6 +14,7 @@ sys.path.append(parent_dir)
 
 # Now import config from the src directory
 from config import Config
+from analysis_output.calibration.style import COVERAGE_Y_RANGE, styled_subplots
 
 def load_model_metrics(dataset, models, temp="0.9"):
     """Load metrics for all models for a specific dataset."""
@@ -42,7 +43,7 @@ def plot_psize_vs_confidence(all_metrics, dataset, output_dir="results/integrate
         def adjust_text(texts):
             pass
     
-    fig, ax = plt.subplots(figsize=(12, 7))  # Increased figure width for legend
+    fig, ax = styled_subplots(width=12.0, height=7.0)  # Increased figure width for legend
     all_texts = []
     
     for model_name, metrics in all_metrics.items():
@@ -126,7 +127,7 @@ def plot_psize_vs_confidence(all_metrics, dataset, output_dir="results/integrate
 
 def plot_confidence_vs_coverage(all_metrics, dataset, output_dir="results/integrated_analysis"):
     """Plot confidence (1-alpha) vs empirical coverage for all models."""
-    fig, ax = plt.subplots(figsize=(12, 7))  # Increased figure width for legend
+    fig, ax = styled_subplots(width=12.0, height=7.0)  # Increased figure width for legend
     
     # Add diagonal reference line (perfect calibration)
     ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
@@ -170,7 +171,7 @@ def plot_confidence_vs_coverage(all_metrics, dataset, output_dir="results/integr
     ax.set_xlabel('Confidence (1-α)')
     ax.set_ylabel('Empirical Coverage')
     ax.set_xlim([0, 1])
-    ax.set_ylim([0, 1])
+    ax.set_ylim(COVERAGE_Y_RANGE)
     ax.grid(True, alpha=0.3)
     
     # Move legend outside the plot
@@ -562,7 +563,7 @@ def load_reliability_data(dataset, models, temp="0.9"):
 
 def plot_merged_reliability_diagram(all_reliability_data, dataset, output_dir="results/integrated_analysis"):
     """Plot merged reliability diagram for all models for a specific dataset."""
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = styled_subplots(width=12.0, height=7.0)
     
     # Add diagonal reference line (perfect calibration)
     ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
@@ -715,7 +716,7 @@ def plot_merged_reliability_diagram(all_reliability_data, dataset, output_dir="r
 
 def plot_multilabel_reliability_diagram(all_reliability_data, dataset, output_dir="results/integrated_analysis"):
     """Plot reliability diagram specifically for multi-label datasets like E-c and GoEmotions."""
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = styled_subplots(width=12.0, height=7.0)
     
     # Add diagonal reference line (perfect calibration)
     ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')
@@ -895,7 +896,7 @@ def plot_top_p_comparison(all_metrics, dataset, output_dir="results/integrated_a
         def adjust_text(texts):
             pass
     
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = styled_subplots(width=12.0, height=7.0)
     all_texts = []
     
     for model_name, metrics in all_metrics.items():
@@ -974,7 +975,7 @@ def plot_top_p_coverage_comparison(all_metrics, dataset, output_dir="results/int
         def adjust_text(texts):
             pass
     
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = styled_subplots(width=12.0, height=7.0)
     
     # Add diagonal reference line (perfect calibration)
     ax.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Perfect calibration')

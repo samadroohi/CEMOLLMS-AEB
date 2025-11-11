@@ -14,9 +14,7 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
-# Set style for presentation
-plt.style.use('seaborn-v0_8-whitegrid')
-sns.set_palette("Set2")
+from analysis_output.calibration.style import styled_subplots
 
 class PresentationPlotter:
     def __init__(self, results_dir: str = "results/responses"):
@@ -109,7 +107,7 @@ class PresentationPlotter:
         os.makedirs(save_path, exist_ok=True)
         
         # Create figure with subplots - more compact for presentation
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = styled_subplots(width=16.0, height=12.0, nrows=2, ncols=2)
         
         # Process each dataset
         for idx, dataset in enumerate(self.datasets):
@@ -205,7 +203,7 @@ class PresentationPlotter:
     
     def create_residual_presentation_plot(self, save_path: str):
         """Create residual analysis presentation plot."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = styled_subplots(width=16.0, height=12.0, nrows=2, ncols=2)
         
         for idx, dataset in enumerate(self.datasets):
             row, col = idx // 2, idx % 2
@@ -297,7 +295,7 @@ class PresentationPlotter:
         df = pd.DataFrame(performance_data)
         
         # Create subplots
-        fig, axes = plt.subplots(1, 2, figsize=(20, 8))
+        fig, axes = styled_subplots(width=20.0, height=8.0, nrows=1, ncols=2)
         
         # R² comparison
         pivot_r2 = df.pivot(index='Model', columns='Dataset', values='R_squared')

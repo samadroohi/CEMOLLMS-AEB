@@ -15,6 +15,7 @@ from analysis_output.calibration.style import (
     FIG_WIDTH_1COL,
     FIG_WIDTH_2COL,
     COLOR_PALETTE,
+    COVERAGE_Y_RANGE,
     apply_publication_style,
 )
 
@@ -137,7 +138,7 @@ def plot_coverage_curves(df: pd.DataFrame,
     ax.set_xlabel("Target coverage (1 - α)")
     ax.set_ylabel("Empirical coverage")
     ax.set_xlim(0.5, 1.01)
-    ax.set_ylim(0.5, 1.01)
+    ax.set_ylim(*COVERAGE_Y_RANGE)
     ax.legend(frameon=False, title="Conformal mode")
     ax.set_title(f"{model} · {dataset}")
 

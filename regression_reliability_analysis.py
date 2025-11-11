@@ -16,9 +16,7 @@ from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
-# Set style for presentation
-plt.style.use('seaborn-v0_8-whitegrid')
-sns.set_palette("Set2")
+from analysis_output.calibration.style import styled_subplots
 
 class RegressionReliabilityAnalyzer:
     def __init__(self, results_dir: str = "results/responses"):
@@ -123,7 +121,7 @@ class RegressionReliabilityAnalyzer:
     
     def create_residual_analysis_plots(self, save_path: str):
         """Create residual analysis plots for regression reliability."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = styled_subplots(width=16.0, height=12.0, nrows=2, ncols=2)
         
         for idx, dataset in enumerate(self.datasets):
             row, col = idx // 2, idx % 2
@@ -178,7 +176,7 @@ class RegressionReliabilityAnalyzer:
     
     def create_prediction_interval_analysis(self, save_path: str):
         """Create prediction interval analysis plots."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = styled_subplots(width=16.0, height=12.0, nrows=2, ncols=2)
         
         for idx, dataset in enumerate(self.datasets):
             row, col = idx // 2, idx % 2
@@ -248,7 +246,7 @@ class RegressionReliabilityAnalyzer:
     
     def create_model_consistency_analysis(self, save_path: str):
         """Create model consistency analysis plots."""
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = styled_subplots(width=16.0, height=12.0, nrows=2, ncols=2)
         
         for idx, dataset in enumerate(self.datasets):
             row, col = idx // 2, idx % 2
@@ -371,7 +369,7 @@ class RegressionReliabilityAnalyzer:
         df = pd.DataFrame(summary_data)
         
         # Create comprehensive summary plots
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = styled_subplots(width=16.0, height=12.0, nrows=2, ncols=2)
         
         # R² heatmap
         pivot_r2 = df.pivot(index='Model', columns='Dataset', values='R²')

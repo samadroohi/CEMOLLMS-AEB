@@ -15,9 +15,7 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
-# Set style for better plots
-plt.style.use('seaborn-v0_8')
-sns.set_palette("husl")
+from analysis_output.calibration.style import styled_subplots
 
 class ResidualAnalyzer:
     def __init__(self, results_dir: str = "results/responses"):
@@ -146,7 +144,7 @@ class ResidualAnalyzer:
             if n_models == 0:
                 continue
                 
-            fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+            fig, axes = styled_subplots(width=18.0, height=12.0, nrows=2, ncols=3)
             axes = axes.flatten()
             
             # Plot residuals for each model
@@ -269,7 +267,7 @@ class ResidualAnalyzer:
         domain_min, domain_max = self.dataset_domains[dataset]
         
         # Create comprehensive domain-specific plots
-        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        fig, axes = styled_subplots(width=20.0, height=12.0, nrows=2, ncols=3)
         
         # 1. Residuals vs True Values (all models)
         for model in df['Model'].unique():
@@ -407,7 +405,7 @@ class ResidualAnalyzer:
         df = pd.DataFrame(all_data)
         
         # Create combined plots
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig, axes = styled_subplots(width=16.0, height=12.0, nrows=2, ncols=2)
         
         # 1. Residuals by dataset
         sns.boxplot(data=df, x='Dataset', y='Residual', ax=axes[0,0])
@@ -461,7 +459,7 @@ class ResidualAnalyzer:
         
         # Plot for [0,1] domain datasets
         if not zero_one_datasets.empty:
-            fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+            fig, axes = styled_subplots(width=16.0, height=6.0, nrows=1, ncols=2)
             
             # Residuals vs True Values for [0,1] domain
             for dataset in zero_one_datasets['Dataset'].unique():
@@ -488,7 +486,7 @@ class ResidualAnalyzer:
         
         # Plot for [-4,4] domain dataset
         if not neg_four_four_datasets.empty:
-            fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+            fig, axes = styled_subplots(width=16.0, height=6.0, nrows=1, ncols=2)
             
             # Residuals vs True Values for [-4,4] domain
             for model in neg_four_four_datasets['Model'].unique():
