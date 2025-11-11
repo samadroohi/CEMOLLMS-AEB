@@ -12,7 +12,7 @@ PYTHON = sys.executable
 
 def _run_step(cmd: Sequence[str]) -> bool:
     cmd_list = list(cmd)
-    print("→", " ".join(cmd_list))
+    print("->", " ".join(cmd_list))
     try:
         subprocess.run(cmd_list, check=True)
         return True

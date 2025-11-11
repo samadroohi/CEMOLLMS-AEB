@@ -20,11 +20,11 @@ DATASETS = [
     "TDT",
     "SST5",
     "V-oc",
-    "EI-reg",
-    "V-reg",
-    "V-A,V-M,V-NYT,V-T",
-    "Emobank",
-    "SST",
+    #"EI-reg",
+    #"V-reg",
+    #"V-A,V-M,V-NYT,V-T",
+    #"Emobank",
+    #"SST",
     "GoEmotions",
     "E-c",
 ]
@@ -34,7 +34,7 @@ PYTHON = sys.executable
 
 def run_or_skip(cmd: list[str]) -> bool:
     """Execute command; print a message if it fails and continue."""
-    print("→", " ".join(cmd))
+    print("->", " ".join(cmd))
     try:
         subprocess.run(cmd, check=True)
         return True

@@ -29,7 +29,32 @@ def get_predictor(ds_type, alpha):
         return None
     
     elif ds_type == "ordinal_classification":
-        return OrdinalClassificationConformalPredictor()
+        class_map = Config.VALID_D_TYPES.get(Config.DS_TYPE, {})
+        classes = list(class_map.keys()) if isinstance(class_map, dict) else list(class_map)
+        if not classes:
+            raise ValueError(f"No class vocabulary defined for dataset type '{Config.DS_TYPE}'")
+        mode = getattr(Config, "ORDINAL_CP_MODE", "global")
+        tau = getattr(Config, "ORDINAL_RARE_SHRINK", 5.0)
+        if (
+            mode == "hybrid"
+            and getattr(Config, "ORDINAL_HYBRID_TUNE", False)
+        ):
+            grid = getattr(Config, "ORDINAL_HYBRID_TAU_GRID", None)
+            holdout = float(getattr(Config, "ORDINAL_HYBRID_TUNE_HOLDOUT", 0.4))
+            margin = float(getattr(Config, "ORDINAL_HYBRID_MIN_COVERAGE_GAIN", 0.0))
+            size_tol = float(getattr(Config, "ORDINAL_HYBRID_SIZE_TOL", 1e-6))
+            seed = int(getattr(Config, "SEED", 0))
+            return OrdinalClassificationConformalPredictor(
+                classes=classes,
+                mode=mode,
+                rare_shrink_tau="auto",
+                auto_tau_grid=grid,
+                auto_holdout=holdout,
+                auto_seed=seed,
+                auto_coverage_margin=margin,
+                auto_size_tolerance=size_tol,
+            )
+        return OrdinalClassificationConformalPredictor(classes=classes, mode=mode, rare_shrink_tau=float(tau))
 
 def cleaning_results_regression(results, ds_type):
     """
@@ -242,7 +267,7 @@ def convert_to_serializable(obj):
     return obj
 
 
-def build_cp_result_record(dataset_type, true_test, pred_test, probs_test, conformal_results, alpha, repeat_index, mode=None, seed=None):
+def build_cp_result_record(dataset_type, true_test, pred_test, probs_test, conformal_results, alpha, repeat_index, mode=None, seed=None, predictor=None):
     prediction_sets = conformal_results[0]
     return {
         "dataset_type": dataset_type,
@@ -256,6 +281,7 @@ def build_cp_result_record(dataset_type, true_test, pred_test, probs_test, confo
         "predictions": convert_to_serializable(pred_test),
         "probs": convert_to_serializable(probs_test),
         "prediction_sets": convert_to_serializable(prediction_sets),
+        "tuned_tau": float(getattr(predictor, "tuned_tau", np.nan)) if getattr(predictor, "tuned_tau", None) is not None else None,
     }
 
 

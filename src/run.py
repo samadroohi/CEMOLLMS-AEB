@@ -373,8 +373,17 @@ def run_conformal_prediction():
     E, N, D = load_embeddings_any(Config.HIDDEN_OUT, results, dtype=np.float16)
 
     is_multiclass_task = dataset_type in Config.TASK_TYPES.get("multiclass_classification", [])
+    is_ordinal_task = dataset_type in Config.TASK_TYPES.get("ordinal_classification", [])
+
     original_multiclass_mode = getattr(Config, "MULTICLASS_CP_MODE", None)
-    modes_to_run = Config.get_multiclass_modes() if is_multiclass_task else [original_multiclass_mode]
+    original_ordinal_mode = getattr(Config, "ORDINAL_CP_MODE", None)
+
+    if is_multiclass_task:
+        modes_to_run = Config.get_multiclass_modes()
+    elif is_ordinal_task:
+        modes_to_run = Config.get_ordinal_modes()
+    else:
+        modes_to_run = [None]
 
     for repeat_idx in range(Config.NUM_REPEATS):
         print(f"\n--- Conformal Prediction Repeat {repeat_idx + 1} / {Config.NUM_REPEATS} ---")
@@ -451,6 +460,10 @@ def run_conformal_prediction():
                 Config.MULTICLASS_CP_MODE = mode
                 Config.update_paths()
                 print(f"\n=== Multiclass CP mode: {mode} ===")
+            elif is_ordinal_task:
+                Config.ORDINAL_CP_MODE = mode
+                Config.update_paths()
+                print(f"\n=== Ordinal CP mode: {mode} ===")
 
             for alpha in Config.CP_ALPHA:
                 matched_type = False
@@ -476,6 +489,11 @@ def run_conformal_prediction():
                             print(
                                 f" Task: {ttype} Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}"
                             )
+                            if getattr(baseline_cp, "tuned_tau", None) is not None:
+                                print(
+                                    f"  -> Hybrid tau tuned to {baseline_cp.tuned_tau:.3f} (coverage target >= global, size <= mondrian on inner split)"
+                                )
+                            current_mode = mode if (is_multiclass_task or is_ordinal_task) else None
                             record = build_cp_result_record(
                                 dataset_type,
                                 true_test,
@@ -484,8 +502,9 @@ def run_conformal_prediction():
                                 conformal_results,
                                 alpha,
                                 repeat_idx,
-                                mode=mode if is_multiclass_task else None,
+                                mode=current_mode,
                                 seed=Config.SEED + repeat_idx,
+                                predictor=baseline_cp,
                             )
                             result_path = Config.CONFORMAL_RESULTS_FILE
                             aggregated_results_by_path[result_path].append(record)
@@ -497,7 +516,9 @@ def run_conformal_prediction():
 
     if is_multiclass_task:
         Config.MULTICLASS_CP_MODE = original_multiclass_mode
-        Config.update_paths()
+    if is_ordinal_task:
+        Config.ORDINAL_CP_MODE = original_ordinal_mode
+    Config.update_paths()
 
 if __name__ == "__main__":
     analysis = False # False if you want to run inference and conformal prediction
@@ -509,10 +530,10 @@ if __name__ == "__main__":
         "lzw1008/Emoopt-13b"
     ]
     dataset_names = [
-        #"EI-oc", 
-        #"TDT", 
-        #"SST5",
-        #"V-oc",  
+        "EI-oc", 
+        "TDT", 
+        "SST5",
+        "V-oc",  
         #"EI-reg", 
         #"V-reg", 
         #"V-A,V-M,V-NYT,V-T", 

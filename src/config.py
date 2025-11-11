@@ -12,16 +12,17 @@ class Config:
     INFER_FILE = "data/AEB.json"
 
     TASK_TYPES = {
+        "ordinal_classification": ["EI-oc", "TDT","V-oc", "SST5"], 
         "weighted_regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank", "SST"],
         "classification": [], 
-        "ordinal_classification": ["EI-oc", "TDT","V-oc", "SST5"], 
+        
         "regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank","SST"], 
         "local_regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank","SST"], 
         "multiclass_classification": [ "GoEmotions", "E-c"]
     }
 
     VERBOSE = False
-    CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5]
 
     # number of repeat runs for stochastic models
     NUM_REPEATS = 10
@@ -30,6 +31,28 @@ class Config:
     MULTICLASS_CP_MODE = "hybrid"  # options: "global", "mondrian", "hybrid"
     MULTICLASS_CP_MODES = ["global", "mondrian", "hybrid"]
     MULTICLASS_RARE_SHRINK = 5     # τ parameter for rare-class shrinkage
+
+    # ---------- Ordinal CP settings ----------
+    ORDINAL_CP_MODE = "global"     # options mirror multiclass
+    ORDINAL_CP_MODES = ["global", "mondrian", "hybrid"]
+    ORDINAL_RARE_SHRINK = 5        # τ parameter for rare-class shrinkage
+    ORDINAL_HYBRID_TUNE = True     # if True, tune τ automatically
+    ORDINAL_HYBRID_TAU_GRID = [
+        0.25,
+        0.5,
+        1.0,
+        2.0,
+        5.0,
+        10.0,
+        20.0,
+        40.0,
+        80.0,
+        160.0,
+        320.0,
+    ]
+    ORDINAL_HYBRID_TUNE_HOLDOUT = 0.4  # fraction of calibration points for inner validation
+    ORDINAL_HYBRID_MIN_COVERAGE_GAIN = 0.02  # require hybrid coverage >= global + margin
+    ORDINAL_HYBRID_SIZE_TOL = 1e-6  # allow small numerical slack when comparing set sizes
 
     # dataset selection
     DS_TYPE = None
@@ -152,24 +175,16 @@ class Config:
         base_dir = f"results/conformal_results/{cls.DS_TYPE}/temp_{temperature}"
         suffix = ""
         if cls.DS_TYPE in cls.TASK_TYPES.get("multiclass_classification", []):
-            mode = str(getattr(cls, "MULTICLASS_CP_MODE", "")).strip().lower()
-            if mode:
-                parts = [mode]
-                tau = getattr(cls, "MULTICLASS_RARE_SHRINK", None)
-                if tau is not None and mode in {"hybrid", "mondrian"}:
-                    try:
-                        tau_value = float(tau)
-                    except (TypeError, ValueError):
-                        tau_value = None
-                    if tau_value is not None and tau_value > 0:
-                        if tau_value.is_integer():
-                            tau_str = str(int(tau_value))
-                        else:
-                            tau_str = str(tau_value).replace(".", "p")
-                        parts.append(f"tau{tau_str}")
-                safe_tag = cls._sanitize_tag("_".join(parts))
-                if safe_tag:
-                    suffix = f"__{safe_tag}"
+            suffix = cls._build_mode_suffix(
+                getattr(cls, "MULTICLASS_CP_MODE", None),
+                getattr(cls, "MULTICLASS_RARE_SHRINK", None),
+            )
+        elif cls.DS_TYPE in cls.TASK_TYPES.get("ordinal_classification", []):
+            suffix = cls._build_mode_suffix(
+                getattr(cls, "ORDINAL_CP_MODE", None),
+                getattr(cls, "ORDINAL_RARE_SHRINK", None),
+            )
+
         filename = f"{model_name_short}{suffix}.json"
         return os.path.join(base_dir, filename)
 
@@ -177,6 +192,28 @@ class Config:
     def _sanitize_tag(tag: str) -> str:
         tag = tag.lower()
         return "".join(ch if ch.isalnum() or ch in {"_", "-"} else "-" for ch in tag)
+
+    @classmethod
+    def _build_mode_suffix(cls, mode, tau) -> str:
+        mode_str = str(mode or "").strip().lower()
+        if not mode_str:
+            return ""
+
+        parts = [mode_str]
+        if tau is not None and mode_str in {"hybrid", "mondrian"}:
+            try:
+                tau_value = float(tau)
+            except (TypeError, ValueError):
+                tau_value = None
+            if tau_value is not None and tau_value > 0:
+                if tau_value.is_integer():
+                    tau_str = str(int(tau_value))
+                else:
+                    tau_str = str(tau_value).replace(".", "p")
+                parts.append(f"tau{tau_str}")
+
+        safe_tag = cls._sanitize_tag("_".join(parts))
+        return f"__{safe_tag}" if safe_tag else ""
 
     @classmethod
     def get_multiclass_modes(cls):
@@ -197,3 +234,25 @@ class Config:
                 return unique_modes
         default_mode = getattr(cls, "MULTICLASS_CP_MODE", None)
         return [default_mode] if default_mode else ["hybrid"]
+
+    @classmethod
+    def get_ordinal_modes(cls):
+        """Return the list of ordinal CP modes to evaluate in the current run."""
+        modes = getattr(cls, "ORDINAL_CP_MODES", None)
+        normalized = []
+        if modes:
+            for mode in modes:
+                mode_str = str(mode).strip().lower()
+                if mode_str:
+                    normalized.append(mode_str)
+
+        if normalized:
+            unique_modes = []
+            for mode in normalized:
+                if mode not in unique_modes:
+                    unique_modes.append(mode)
+            if unique_modes:
+                return unique_modes
+
+        default_mode = getattr(cls, "ORDINAL_CP_MODE", None)
+        return [default_mode] if default_mode else ["global"]
