@@ -1,8 +1,20 @@
-from config import Config
-from conformalprediction.regression import ConformalRegressionPredictor
-from conformalprediction.classification import ClassificationConformalPredictor
-from conformalprediction.multiclass import MulticlassConformalPredictor
-from conformalprediction.ordinal_classification import OrdinalClassificationConformalPredictor
+from pathlib import Path
+
+if __package__ is None or __package__ == "":
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from config import Config
+    from conformalprediction.regression import ConformalRegressionPredictor
+    from conformalprediction.classification import ClassificationConformalPredictor
+    from conformalprediction.multiclass import MulticlassConformalPredictor
+    from conformalprediction.ordinal_classification import OrdinalClassificationConformalPredictor
+else:
+    from .config import Config
+    from .conformalprediction.regression import ConformalRegressionPredictor
+    from .conformalprediction.classification import ClassificationConformalPredictor
+    from .conformalprediction.multiclass import MulticlassConformalPredictor
+    from .conformalprediction.ordinal_classification import OrdinalClassificationConformalPredictor
 #from conformalprediction.localweightedcp import NormalizedConformalRegression
 import json
 import os

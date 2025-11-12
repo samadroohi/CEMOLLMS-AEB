@@ -1,8 +1,9 @@
 import os
 from collections import defaultdict
 
+from pathlib import Path
+
 from sklearn.preprocessing import scale
-from config import Config
 import torch
 from transformers import LlamaTokenizer, AutoTokenizer, AutoModelForCausalLM, AutoConfig
 import pandas as pd
@@ -11,10 +12,22 @@ import random
 import numpy as np
 import argparse
 from tqdm import tqdm
-from conformalprediction.regression import ConformalRegressionPredictor
-from utils import  *
-from analysis.run_analysis import run_analysis
-from analysis.merged_analysis import run_integrated_analysis
+
+if __package__ is None or __package__ == "":
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from config import Config
+    from conformalprediction.regression import ConformalRegressionPredictor
+    from utils import *
+    from analysis.run_analysis import run_analysis
+    from analysis.merged_analysis import run_integrated_analysis
+else:
+    from .config import Config
+    from .conformalprediction.regression import ConformalRegressionPredictor
+    from .utils import *
+    from .analysis.run_analysis import run_analysis
+    from .analysis.merged_analysis import run_integrated_analysis
 import gc
 import gc, re
 import numpy as np
@@ -530,17 +543,18 @@ if __name__ == "__main__":
         "lzw1008/Emoopt-13b"
     ]
     dataset_names = [
-        "EI-oc", 
-        "TDT", 
+        "V-oc",
+        "EI-oc",  
         "SST5",
-        "V-oc",  
+          
         #"EI-reg", 
         #"V-reg", 
         #"V-A,V-M,V-NYT,V-T", 
         #"Emobank", 
         #"SST", 
-        "GoEmotions", 
-        "E-c"
+        "E-c",
+        "GoEmotions"
+        
     ]   
     for model_name in model_names:
         for dataset_name in dataset_names:

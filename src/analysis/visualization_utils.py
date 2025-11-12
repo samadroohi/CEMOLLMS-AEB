@@ -1,7 +1,381 @@
-from matplotlib import pyplot as plt
+
 import os
+from typing import Optional, Tuple, List, Dict
 import numpy as np
-from config import Config
+from src.config import Config
+import matplotlib.pyplot as plt
+# Import shared style utilities
+import sys
+import importlib.util
+from matplotlib.lines import Line2D
+style_path = os.path.join(os.path.dirname(__file__), '../../analysis_output/calibration/style.py')
+spec = importlib.util.spec_from_file_location('style', style_path)
+style = importlib.util.module_from_spec(spec)
+sys.modules['style'] = style
+spec.loader.exec_module(style)
+
+
+def _compute_single_label_bins(results: dict) -> dict:
+    probs_arr = np.asarray(results["probs"], dtype=float)
+    y_true = np.array([label[1] for label in results["true_values"]], dtype=int)
+    if probs_arr.ndim != 2:
+        raise ValueError("Expected probability matrix with shape [N, C] for single-label reliability diagram")
+    pred_labels = np.argmax(probs_arr, axis=1)
+    confidences = probs_arr[np.arange(len(pred_labels)), pred_labels]
+    correctness = (pred_labels == y_true).astype(float)
+
+    n_bins = 10
+    bin_edges = np.linspace(0, 1, n_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    bin_accuracies = np.full(n_bins, np.nan, dtype=float)
+    bin_confidences = np.full(n_bins, np.nan, dtype=float)
+    bin_counts = np.zeros(n_bins, dtype=int)
+    total = len(confidences)
+    ece_value = 0.0
+    mcale = 0.0
+    min_plot_count = 10
+
+    for i in range(n_bins):
+        if i == n_bins - 1:
+            mask = (confidences >= bin_edges[i]) & (confidences <= bin_edges[i + 1])
+        else:
+            mask = (confidences >= bin_edges[i]) & (confidences < bin_edges[i + 1])
+        count = int(mask.sum())
+        bin_counts[i] = count
+        if count == 0:
+            continue
+        bin_acc = float(correctness[mask].mean())
+        bin_conf = float(confidences[mask].mean())
+        diff = abs(bin_acc - bin_conf)
+        ece_value += (count / max(1, total)) * diff
+        mcale = max(mcale, diff)
+        if count >= min_plot_count:
+            bin_accuracies[i] = bin_acc
+            bin_confidences[i] = bin_conf
+
+    return {
+        "bin_centers": bin_centers,
+        "bin_accuracies": bin_accuracies,
+        "bin_confidences": bin_confidences,
+        "bin_counts": bin_counts,
+        "ece": float(ece_value),
+        "mcale": float(mcale),
+        "accuracy": float(np.mean(correctness)),
+        "mean_confidence": float(np.mean(confidences)),
+        "confidences": confidences,
+        "pred_labels": pred_labels,
+        "y_true": y_true,
+    }
+
+
+def _compute_multilabel_bins(results: dict, dataset_type: str) -> dict:
+    true_values = results["true_values"]
+    probs = results["probs"]
+    class_labels = list(Config.VALID_D_TYPES[dataset_type].values())
+    n_bins = 10
+    confidences = []
+    f1_scores = []
+    subset_coverages = []
+    for instance_probs, labels in zip(probs, true_values):
+        true_set = set(labels)
+        predicted_labels = []
+        avg_confidence = 0.0
+        for step_probs in instance_probs:
+            if len(step_probs) == 0:
+                continue
+            class_idx = int(np.argmax(step_probs))
+            avg_confidence += float(step_probs[class_idx])
+            predicted_labels.append(class_labels[class_idx])
+        if len(instance_probs) > 0:
+            avg_confidence /= len(instance_probs)
+        predicted_set = set(predicted_labels)
+        if not true_set and not predicted_set:
+            f1 = 1.0
+        elif not true_set or not predicted_set:
+            f1 = 0.0
+        else:
+            precision = len(true_set & predicted_set) / len(predicted_set) if predicted_set else 0.0
+            recall = len(true_set & predicted_set) / len(true_set) if true_set else 0.0
+            if precision + recall == 0:
+                f1 = 0.0
+            else:
+                f1 = 2 * precision * recall / (precision + recall)
+        subset_coverages.append(int(true_set.issubset(predicted_set)))
+        confidences.append(avg_confidence)
+        f1_scores.append(f1)
+
+    confidences = np.asarray(confidences, dtype=float)
+    f1_scores = np.asarray(f1_scores, dtype=float)
+    subset_coverages = np.asarray(subset_coverages, dtype=float)
+
+    bin_edges = np.linspace(0, 1, n_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    bin_accuracies = np.full(n_bins, np.nan, dtype=float)
+    bin_confidences = np.full(n_bins, np.nan, dtype=float)
+    bin_counts = np.zeros(n_bins, dtype=int)
+    total = len(confidences)
+    ece_value = 0.0
+    mcale = 0.0
+    min_plot_count = 10
+
+    for i in range(n_bins):
+        if i == n_bins - 1:
+            mask = (confidences >= bin_edges[i]) & (confidences <= bin_edges[i + 1])
+        else:
+            mask = (confidences >= bin_edges[i]) & (confidences < bin_edges[i + 1])
+        count = int(mask.sum())
+        bin_counts[i] = count
+        if count == 0:
+            continue
+        bin_acc = float(f1_scores[mask].mean())
+        bin_conf = float(confidences[mask].mean())
+        diff = abs(bin_acc - bin_conf)
+        ece_value += (count / max(1, total)) * diff
+        mcale = max(mcale, diff)
+        if count >= min_plot_count:
+            bin_accuracies[i] = bin_acc
+            bin_confidences[i] = bin_conf
+
+    return {
+        "bin_centers": bin_centers,
+        "bin_accuracies": bin_accuracies,
+        "bin_confidences": bin_confidences,
+        "bin_counts": bin_counts,
+        "ece": float(ece_value),
+        "mcale": float(mcale),
+        "mean_confidence": float(np.mean(confidences)) if confidences.size else float("nan"),
+        "f1": float(np.mean(f1_scores)) if f1_scores.size else float("nan"),
+        "subset_coverage": float(np.mean(subset_coverages)) if subset_coverages.size else float("nan"),
+    }
+
+
+def _plot_reliability_comparison(
+    entries,
+    dataset_type: str,
+    title: str,
+    output_path: Optional[str],
+    stats_fn,
+    x_label: str,
+    y_label: str,
+    fig_width: float = getattr(style, "FIG_WIDTH_1COL", 3.4),
+    ax=None,
+):
+    if not entries:
+        return None, ax, ([], [])
+    ax_provided = ax is not None
+    if not ax_provided:
+        fig, ax = style.styled_subplots(width=fig_width)
+    else:
+        fig = ax.figure
+    perfect_color = "#d7a0a0"
+    reference_handle = Line2D([0], [0], color=perfect_color, linestyle="--", linewidth=1.2, label="Perfect calibration")
+    ax.plot([0, 1], [0, 1], linestyle="--", color=perfect_color, linewidth=1.2)
+
+    colors = style.COLOR_PALETTE
+    marker_cycle = ["o", "s", "^", "D", "P", "X", "v", "<", ">", "*"]
+    marker_size = getattr(style, "MARKER_SIZE", 42)
+    marker_edge_width = getattr(style, "MARKER_EDGE_WIDTH", 0.55)
+    marker_face_color = getattr(style, "MARKER_FACE_COLOR", None)
+    marker_edge_color = getattr(style, "MARKER_EDGE_COLOR", "#1a1a1a")
+    marker_alpha = getattr(style, "MARKER_ALPHA", 0.9)
+    legend_marker_size = float(np.sqrt(marker_size)) if marker_size and marker_size > 0 else 6.0
+    color_map: Dict[str, str] = {}
+    scheme_markers: Dict[str, Tuple[str, str]] = {}
+
+    def parse_label(label: str) -> Tuple[str, str]:
+        if "·" in label:
+            parts = [part.strip() for part in label.split("·", 1)]
+            if len(parts) == 2:
+                return parts[0], parts[1]
+        lower = label.lower()
+        scheme = "Identity" if "identity" in lower else ("Platt" if "platt" in lower else "Baseline")
+        return label.strip(), scheme
+
+    for entry in entries:
+        stats = stats_fn(entry["results"])
+        mask = ~np.isnan(stats["bin_accuracies"])
+        if not np.any(mask):
+            continue
+
+        model_name, scheme_name = parse_label(entry.get("label", "Model"))
+        if model_name not in color_map:
+            color_map[model_name] = colors[len(color_map) % len(colors)]
+        color = color_map[model_name]
+
+        scheme_key = scheme_name.strip().lower()
+        if scheme_key not in scheme_markers:
+            marker = marker_cycle[len(scheme_markers) % len(marker_cycle)]
+            scheme_markers[scheme_key] = (marker, scheme_name)
+        marker, scheme_label = scheme_markers[scheme_key]
+        ax.plot(
+            stats["bin_centers"][mask],
+            stats["bin_accuracies"][mask],
+            color=color,
+            linewidth=1.4,
+            linestyle="-",
+        )
+        face_color = color if marker_face_color in (None, "", "auto") else marker_face_color
+        edge_color = marker_edge_color if marker_edge_color not in (None, "", "auto") else color
+        ax.scatter(
+            stats["bin_centers"][mask],
+            stats["bin_accuracies"][mask],
+            s=marker_size,
+            facecolor=face_color,
+            edgecolor=edge_color,
+            linewidth=marker_edge_width,
+            marker=marker,
+            alpha=marker_alpha,
+            zorder=3,
+        )
+
+    if not ax_provided:
+        ax.set_title(title or f"Reliability · {dataset_type}")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_aspect('equal', adjustable='box')
+    ax.grid(color="0.92", linewidth=0.6)
+
+    combined_handles = [reference_handle]
+    combined_labels = [reference_handle.get_label()]
+
+    for model, color in color_map.items():
+        combined_handles.append(Line2D([0], [0], color=color, linestyle="-", linewidth=1.6))
+        combined_labels.append(model)
+
+    for scheme_key, (marker, scheme_label) in scheme_markers.items():
+        combined_handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker=marker,
+                linestyle="none",
+                markerfacecolor="#d9d9d9",
+                markeredgecolor="0.1",
+                markeredgewidth=0.6,
+                markersize=legend_marker_size * 1.1,
+            )
+        )
+        combined_labels.append(scheme_label)
+
+    legend_handles = combined_handles
+    legend_labels = combined_labels
+
+    if not ax_provided:
+        ax.legend(legend_handles, legend_labels, frameon=False, loc="best")
+        if output_path:
+            fig.savefig(output_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+            print(f"Plot saved to: {output_path}")
+        else:
+            plt.show()
+
+    return (None if ax_provided else fig), ax, (legend_handles, legend_labels)
+
+
+def classification_reliability_comparison(
+    entries,
+    dataset_type: str,
+    title: Optional[str] = None,
+    output_path: Optional[str] = None,
+) -> None:
+    fig_width = style.FIG_WIDTH_2COL if len(entries) > 1 else style.FIG_WIDTH_1COL
+    _plot_reliability_comparison(
+        entries,
+        dataset_type,
+        title or f"Reliability · {dataset_type}",
+        output_path,
+        stats_fn=_compute_single_label_bins,
+        x_label="Confidence",
+        y_label="Observed Frequency",
+        fig_width=fig_width,
+    )
+
+
+def multiclass_classification_reliability_comparison(
+    entries,
+    dataset_type: str,
+    title: Optional[str] = None,
+    output_path: Optional[str] = None,
+) -> None:
+    def stats_fn(results):
+        return _compute_multilabel_bins(results, dataset_type)
+
+    fig_width = style.FIG_WIDTH_2COL if len(entries) > 1 else style.FIG_WIDTH_1COL
+    _plot_reliability_comparison(
+        entries,
+        dataset_type,
+        title or f"Reliability · {dataset_type}",
+        output_path,
+        stats_fn=stats_fn,
+        x_label="Confidence",
+        y_label="F1 Score",
+        fig_width=fig_width,
+    )
+
+
+def plot_task_comparison_panel(
+    task_name: str,
+    dataset_infos: List[Dict[str, object]],
+    output_path: str,
+) -> None:
+    if not dataset_infos:
+        return
+    n = len(dataset_infos)
+    width = max(style.FIG_WIDTH_1COL * n, style.FIG_WIDTH_2COL)
+    height = width * style.GOLDEN_RATIO
+    fig, axes = style.styled_subplots(width=width, height=height, ncols=n, squeeze=False)
+    axes = axes.flatten()
+    for ax, info in zip(axes, dataset_infos):
+        entries = info.get("entries", [])
+        dataset = info.get("dataset", "")
+        multilabel = bool(info.get("multilabel", False))
+        stats_fn = (lambda res, ds=dataset: _compute_multilabel_bins(res, ds)) if multilabel else _compute_single_label_bins
+        x_label = "Confidence"
+        y_label = "F1 Score" if multilabel else "Accuracy"
+        _, _, (handles, labels) = _plot_reliability_comparison(
+            entries,
+            dataset,
+            title=dataset,
+            output_path=None,
+            stats_fn=stats_fn,
+            x_label=x_label,
+            y_label=y_label,
+            fig_width=width / max(1, n),
+            ax=ax,
+        )
+        if dataset:
+            ax.text(
+                0.5,
+                1.05,
+                dataset,
+                transform=ax.transAxes,
+                ha="center",
+                va="bottom",
+                fontsize=style.FONT_SIZE_TITLE,
+                fontweight="semibold",
+            )
+        if handles and labels:
+            legend_font = getattr(style, "FONT_SIZE_LEGEND", 5.0)
+            ax.legend(
+                handles,
+                labels,
+                frameon=True,
+                loc="upper left",
+                fontsize=legend_font,
+                handlelength=1.2,
+                handletextpad=0.4,
+                borderpad=0.25,
+            )
+
+    # Hide unused axes if dataset count < n (shouldn't happen but safe)
+    for ax in axes[len(dataset_infos):]:
+        ax.axis("off")
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 def regression_calibration_diagram(results: dict,
                                  ds_type: str,
@@ -114,126 +488,42 @@ def classification_relibaility_diagram(results: dict,
                                         output_dir: str = None,
                                         title: str = None,
                                         figsize: tuple = (10, 6),
-                                        ):
+                                        output_path: Optional[str] = None):
     """
-    Create a reliability diagram for classification predictions.
-    (Modified to compute average bin confidence)
+    Legacy compatibility wrapper that now delegates to classification_reliability_comparison.
     """
     try:
-        # Extract true class indices
-        y_true = np.array([label[1] for label in results["true_values"]])
-        
-        # Convert logits to probabilities and get probability for predicted class
-        predictions = []
-        for i, (probs, true_idx) in enumerate(zip(results["probs"], y_true)):
-            probs = np.array(probs)
-            predictions.append(probs[true_idx])
-            
-        predictions = np.array(predictions)
-        
-        # Create figure
-        plt.figure(figsize=figsize)
-        
-        # Define uniform bins manually
-        n_bins = 10
-        bin_edges = np.linspace(0, 1, n_bins + 1)
-        
-        bin_accuracies = []
-        bin_confidences = []  # average predicted probability for each bin
-        bin_counts = []
-        
-        # Loop over bins
-        for i in range(n_bins):
-            mask = (predictions >= bin_edges[i]) & (predictions < bin_edges[i + 1])
-            bin_count = np.sum(mask)
-            
-            if bin_count >= 10:  # Only compute when there are sufficient samples
-                # Compute bin accuracy (fraction of correct predictions)
-                #pred_labels_prediction = np.array([pred[1] for pred in results["predictions"]])
-                #Compute pred using predictions softtmax values
-                pred_labels_softmax = np.argmax(results["probs"], axis=1)
-                bin_accuracy = np.mean(y_true[mask] == pred_labels_softmax[mask])
-                # Compute average confidence of predictions in this bin
-                avg_confidence = np.mean(predictions[mask])
-                
-                bin_accuracies.append(bin_accuracy)
-                bin_confidences.append(avg_confidence)
-                bin_counts.append(bin_count)
-            else:
-                bin_accuracies.append(np.nan)
-                bin_confidences.append(np.nan)
-                bin_counts.append(bin_count)
-        
-        bin_accuracies = np.array(bin_accuracies)
-        bin_confidences = np.array(bin_confidences)
-        bin_counts = np.array(bin_counts)
-        
-        # Plot perfect calibration line
-        plt.plot([0, 1], [0, 1], 'r--', label='Perfect calibration', alpha=0.5)
-        
-        # Only plot bins with enough data
-        valid_bins = ~np.isnan(bin_accuracies)
-        # For display purposes, you might still use the bin centers:
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
-        plt.plot(bin_centers[valid_bins], bin_accuracies[valid_bins], 'b-', label='Model calibration')
-        plt.scatter(bin_centers[valid_bins], bin_accuracies[valid_bins], c='blue')
-        
-        # Customize plot
-        plt.grid(True, alpha=0.3)
-        if title is None:
-            title = f'Reliability Diagram ({dataset_type})'
-        plt.title(title)
-        plt.xlabel('Predicted Probability')
-        plt.ylabel('Observed Frequency')
-        plt.xlim(0, 1)
-        plt.ylim(0, 1)
-        plt.legend(loc='lower right')
-        
-        # Compute ECE using the actual average predicted probabilities
-        total_samples = np.sum(bin_counts[valid_bins])
-        if total_samples > 0:
-            ece = np.sum(bin_counts[valid_bins] * np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])) / total_samples
-            
-            # Calculate Maximum Calibration Error (mcale)
-            calibration_errors = np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])
-            mcale = np.max(calibration_errors) if len(calibration_errors) > 0 else np.nan
-        else:
-            ece = np.nan
-            mcale = np.nan
-
-        # Annotate the plot with ECE in red text
-        plt.text(0.05, 0.90, f'ECE: {ece:.3f}', transform=plt.gca().transAxes, 
-                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
-        #Annotate the plot with MCE in red text
-        plt.text(0.05, 0.85, f'MCE: {mcale:.3f}', transform=plt.gca().transAxes, 
-                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
-        # Other metrics (Brier)
-        
-        y_true_one_hot = np.array([pred[1] == y_true[i] for i, pred in enumerate(results["predictions"])])
-        brier_score = np.mean((predictions - y_true_one_hot) ** 2)
-        
-        metrics = {
-            'accuracy': float(np.mean(y_true == np.array([pred[1] for pred in results["predictions"]])),
-            ),
-            'ece': float(ece),
-            'mcale': float(mcale),  # Added Maximum Calibration Error
-            'brier_score': float(brier_score),
-            'mean_prediction': float(np.mean(predictions))
-        }
-        
-        # Save or show plot
-        if output_dir:
+        stats = _compute_single_label_bins(results)
+        save_path = output_path
+        if save_path is None and output_dir:
             os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f'reliability_plot_{dataset_type}.png')
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            print(f"Plot saved to: {output_path}")
+            save_path = os.path.join(output_dir, f"reliability_plot_{dataset_type}.png")
+
+        classification_reliability_comparison(
+            [{"label": title or "Model", "results": results}],
+            dataset_type,
+            title=title,
+            output_path=save_path,
+        )
+
+        if results.get("predictions"):
+            pred_indices_list = [pred[1] for pred in results["predictions"]]
+            if len(pred_indices_list) != len(stats["y_true"]):
+                pred_indices_array = stats["pred_labels"]
+            else:
+                pred_indices_array = np.array(pred_indices_list, dtype=int)
         else:
-            plt.show()
-            
-        return metrics
-        
+            pred_indices_array = stats["pred_labels"]
+        y_true_one_hot = (pred_indices_array == stats["y_true"]).astype(float)
+        brier_score = float(np.mean((stats["confidences"] - y_true_one_hot) ** 2))
+
+        return {
+            "accuracy": float(stats["accuracy"]),
+            "ece": float(stats["ece"]),
+            "mcale": float(stats["mcale"]),
+            "brier_score": brier_score,
+            "mean_prediction": float(stats["mean_confidence"]),
+        }
     except Exception as e:
         print(f"Error in classification_relibaility_diagram: {str(e)}")
         print("Data types:")
@@ -245,163 +535,35 @@ def multiclass_classification_relibaility_diagram(results: dict,
                                       dataset_type: str,
                                       output_dir: str = None,
                                       title: str = None,
-                                      figsize: tuple = (10, 6)):
+                                      figsize: tuple = (10, 6),
+                                      output_path: Optional[str] = None):
     """
-    Create a reliability diagram for multilabel classification using Jaccard similarity.
-    
-    Args:
-        results (dict): Dictionary containing prediction results
-        dataset_type (str): Type of dataset (e.g., 'E-c')
-        output_dir (str, optional): Directory to save the plot
-        title (str, optional): Custom title for the plot
-        figsize (tuple, optional): Figure size (width, height)
+    Legacy wrapper that now reuses the comparison plotting utilities while returning summary metrics.
     """
     try:
-        # Extract true values and predicted probabilities
-        true_values = results["true_values"]
-        probs = results["probs"]
-        
-        # Number of bins for the reliability diagram
-        n_bins = 10
-        
-        # Lists to store confidence and accuracy
-        confidences = []
-        jaccard_scores = []
-        
-        # For each example
-        for i in range(len(true_values)):
-            true_set = set(true_values[i])
-            
-            # Get predicted probabilities and create predictions
-            instance_probs = probs[i]
-            predicted_labels = []
-            avg_confidence = 0
-            
-            # For each instance in the example, get prediction with highest prob
-            for label_probs in instance_probs:
-                if len(label_probs) > 0:  # Ensure we have probabilities
-                    class_idx = np.argmax(label_probs)
-                    prob = label_probs[class_idx]
-                    avg_confidence += prob
-                    
-                    # Map index to emotion label
-                    emotion_labels = list(Config.VALID_D_TYPES[dataset_type].values())
-                    predicted_labels.append(emotion_labels[class_idx])
-            
-            if len(instance_probs) > 0:
-                avg_confidence /= len(instance_probs)
-                
-            predicted_set = set(predicted_labels)
-            
-            # Calculate Jaccard similarity
-            if len(true_set) == 0 and len(predicted_set) == 0:
-                jaccard = 1.0
-            elif len(true_set) == 0 or len(predicted_set) == 0:
-                jaccard = 0.0
-            else:
-                jaccard = len(true_set.intersection(predicted_set)) / len(true_set.union(predicted_set))
-                
-            confidences.append(avg_confidence)
-            jaccard_scores.append(jaccard)
-        
-        # Create figure
-        plt.figure(figsize=figsize)
-        
-        # Define uniform bins manually
-        bin_edges = np.linspace(0, 1, n_bins + 1)
-        
-        bin_accuracies = []
-        bin_confidences = []
-        bin_counts = []
-        
-        # Loop over bins
-        for i in range(n_bins):
-            mask = (np.array(confidences) >= bin_edges[i]) & (np.array(confidences) < bin_edges[i + 1])
-            bin_count = np.sum(mask)
-            
-            if bin_count >= 10:  # Only compute when there are sufficient samples
-                # Compute bin accuracy (average Jaccard similarity)
-                bin_accuracy = np.mean(np.array(jaccard_scores)[mask])
-                # Compute average confidence of predictions in this bin
-                avg_confidence = np.mean(np.array(confidences)[mask])
-                
-                bin_accuracies.append(bin_accuracy)
-                bin_confidences.append(avg_confidence)
-                bin_counts.append(bin_count)
-            else:
-                bin_accuracies.append(np.nan)
-                bin_confidences.append(np.nan)
-                bin_counts.append(bin_count)
-        
-        bin_accuracies = np.array(bin_accuracies)
-        bin_confidences = np.array(bin_confidences)
-        bin_counts = np.array(bin_counts)
-        
-        # Plot perfect calibration line
-        plt.plot([0, 1], [0, 1], 'r--', label='Perfect calibration', alpha=0.5)
-        
-        # Only plot bins with enough data
-        valid_bins = ~np.isnan(bin_accuracies)
-        # For display purposes, you might still use the bin centers:
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
-        plt.plot(bin_centers[valid_bins], bin_accuracies[valid_bins], 'b-', label='Model calibration')
-        plt.scatter(bin_centers[valid_bins], bin_accuracies[valid_bins], c='blue')
-        
-        # Customize plot
-        plt.grid(True, alpha=0.3)
-        if title is None:
-            title = f'Reliability Diagram ({dataset_type})'
-        plt.title(title)
-        plt.xlabel('Mean Predicted Confidence')
-        plt.ylabel('Jaccard Similarity')
-        plt.xlim(0, 1)
-        plt.ylim(0, 1)
-        plt.legend(loc='lower right')
-        
-        # Compute ECE using the actual average predicted probabilities
-        total_samples = np.sum(bin_counts[valid_bins])
-        if total_samples > 0:
-            ece = np.sum(bin_counts[valid_bins] * np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])) / total_samples
-            
-            # Calculate Maximum Calibration Error (mcale)
-            calibration_errors = np.abs(bin_accuracies[valid_bins] - bin_confidences[valid_bins])
-            mcale = np.max(calibration_errors) if len(calibration_errors) > 0 else np.nan
-        else:
-            ece = np.nan
-            mcale = np.nan
-
-        # Annotate the plot with ECE in red text
-        plt.text(0.05, 0.90, f'ECE: {ece:.3f}', transform=plt.gca().transAxes, 
-                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
-        # Annotate the plot with MCE in red text
-        plt.text(0.05, 0.85, f'MCE: {mcale:.3f}', transform=plt.gca().transAxes, 
-                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'), color='red')
-        
-        # Calculate average Jaccard similarity
-        avg_jaccard = np.mean(jaccard_scores)
-        
-        metrics = {
-            'jaccard_similarity': float(avg_jaccard),
-            'ece': float(ece),
-            'mcale': float(mcale),
-            'mean_confidence': float(np.mean(confidences))
-        }
-        
-        # Save or show plot
-        if output_dir:
+        stats = _compute_multilabel_bins(results, dataset_type)
+        save_path = output_path
+        if save_path is None and output_dir:
             os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f'reliability_plot_{dataset_type}.png')
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            print(f"Plot saved to: {output_path}")
-        else:
-            plt.show()
-            
-        return metrics
-        
+            save_path = os.path.join(output_dir, f"reliability_plot_{dataset_type}.png")
+
+        multiclass_classification_reliability_comparison(
+            [{"label": title or "Model", "results": results}],
+            dataset_type,
+            title=title,
+            output_path=save_path,
+        )
+
+        return {
+            "f1": float(stats["f1"]),
+            "ece": float(stats["ece"]),
+            "mcale": float(stats["mcale"]),
+            "mean_confidence": float(stats["mean_confidence"]),
+            "subset_coverage": float(stats["subset_coverage"]),
+        }
     except Exception as e:
         raise Exception(f"Error in multiclass_classification_relibaility_diagram: {str(e)}")
+
 
 def cp_diagrams(results,dataset_type, output_dir):
     plot_confidence_vs_coverage(results, dataset_type, output_dir)

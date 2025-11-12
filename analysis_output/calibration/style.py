@@ -31,6 +31,13 @@ COLOR_PALETTE = [
     "#F0E442", "#56B4E9", "#E69F00", "#999999",
 ]
 
+# Marker styling for scatter overlays (matched with merged calibration plots)
+MARKER_SIZE = 42
+MARKER_EDGE_WIDTH = 0.55
+MARKER_FACE_COLOR = None  # default to series color
+MARKER_EDGE_COLOR = "#1a1a1a"
+MARKER_ALPHA = 0.9
+
 # Standard plot bounds for coverage metrics
 COVERAGE_Y_RANGE = (0.5, 1.0)
 

@@ -12,7 +12,7 @@ class Config:
     INFER_FILE = "data/AEB.json"
 
     TASK_TYPES = {
-        "ordinal_classification": ["EI-oc", "TDT","V-oc", "SST5"], 
+        "ordinal_classification": ["EI-oc", "V-oc", "SST5", "TDT"], 
         "weighted_regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank", "SST"],
         "classification": [], 
         
@@ -20,6 +20,21 @@ class Config:
         "local_regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank","SST"], 
         "multiclass_classification": [ "GoEmotions", "E-c"]
     }
+
+    BASELINE_MODEL_NAMES = [
+        "lzw1008/Emollama-7b",
+        "lzw1008/Emobloom-7b",
+        "lzw1008/Emollama-chat-7b",
+        "lzw1008/Emollama-chat-13b",
+        "lzw1008/Emoopt-13b",
+    ]
+    BASELINE_DATASETS = [
+        "V-oc",
+        "EI-oc",
+        "SST5",
+        "E-c",
+        "GoEmotions",
+    ]
 
     VERBOSE = False
     CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5]
@@ -187,6 +202,24 @@ class Config:
 
         filename = f"{model_name_short}{suffix}.json"
         return os.path.join(base_dir, filename)
+
+    @classmethod
+    def get_all_datasets(cls):
+        datasets = set()
+        for names in cls.TASK_TYPES.values():
+            datasets.update(names or [])
+        return sorted(datasets)
+
+    @classmethod
+    def get_baseline_models(cls):
+        return list(getattr(cls, "BASELINE_MODEL_NAMES", []))
+
+    @classmethod
+    def get_baseline_datasets(cls):
+        datasets = getattr(cls, "BASELINE_DATASETS", None)
+        if datasets:
+            return list(datasets)
+        return cls.get_all_datasets()
 
     @staticmethod
     def _sanitize_tag(tag: str) -> str:

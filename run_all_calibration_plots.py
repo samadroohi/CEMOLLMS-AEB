@@ -16,17 +16,17 @@ MODELS = [
 ]
 
 DATASETS = [
-    "EI-oc",
-    "TDT",
-    "SST5",
     "V-oc",
+    "EI-oc",
+    "SST5",
     #"EI-reg",
     #"V-reg",
     #"V-A,V-M,V-NYT,V-T",
     #"Emobank",
     #"SST",
-    "GoEmotions",
     "E-c",
+    "GoEmotions",
+
 ]
 
 PYTHON = sys.executable
