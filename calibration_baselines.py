@@ -2,7 +2,9 @@ from __future__ import annotations
 import os
 import sys
 import importlib.util
-vis_path = os.path.join(os.path.dirname(__file__), 'visualization_utils.py')
+
+REPO_DIR = os.path.dirname(__file__)
+vis_path = os.path.join(REPO_DIR, 'src', 'analysis', 'visualization_utils.py')
 spec = importlib.util.spec_from_file_location('visualization_utils', vis_path)
 vis = importlib.util.module_from_spec(spec)
 sys.modules['visualization_utils'] = vis
@@ -30,13 +32,22 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from scipy import stats
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score, hamming_loss, precision_score, recall_score
+from sklearn.metrics import (
+    f1_score,
+    hamming_loss,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    recall_score,
+    r2_score,
+)
+from sklearn.isotonic import IsotonicRegression
 
 from src.config import Config
-from .src.utils import cleaning_results, convert_to_serializable
-from .src.analysis.generate_performance_tables import compute_multilabel_calibration_metrics
+from src.utils import cleaning_results, convert_to_serializable
+from src.analysis.generate_performance_tables import compute_multilabel_calibration_metrics
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = REPO_ROOT / "analysis_output" / "calibration" / "baselines"
 EPS = 1e-12
 
@@ -89,6 +100,14 @@ class CalibrationExample:
 
     probs: np.ndarray
     target_indices: List[int]
+
+
+@dataclass
+class RegressionExample:
+    """Container for scalar prediction/target pairs."""
+
+    prediction: float
+    target: float
 
 
 def _ensure_list(obj: Sequence[str] | str | None) -> List[str]:
@@ -204,6 +223,24 @@ def _collect_examples(results: Sequence[Dict], dataset: str) -> Tuple[List[Calib
     return examples, class_labels
 
 
+def _collect_regression_examples(results: Sequence[Dict]) -> List[RegressionExample]:
+    examples: List[RegressionExample] = []
+    for record in results:
+        pred = record.get("prediction")
+        target = record.get("true_value")
+        if pred is None or target is None:
+            continue
+        try:
+            pred_val = float(pred)
+            target_val = float(target)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(pred_val) or not np.isfinite(target_val):
+            continue
+        examples.append(RegressionExample(prediction=pred_val, target=target_val))
+    return examples
+
+
 def _split_examples(examples: List[CalibrationExample], rng: Optional[np.random.Generator] = None) -> Tuple[np.ndarray, np.ndarray, List[List[int]], List[List[int]]]:
     if rng is None:
         rng = np.random.default_rng(seed=Config.SEED)
@@ -222,6 +259,29 @@ def _split_examples(examples: List[CalibrationExample], rng: Optional[np.random.
     cal_targets = [ex.target_indices for ex in calibration]
     test_targets = [ex.target_indices for ex in test]
     return cal_probs, test_probs, cal_targets, test_targets
+
+
+def _split_regression_examples(
+    examples: List[RegressionExample],
+    rng: Optional[np.random.Generator] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if rng is None:
+        rng = np.random.default_rng(seed=Config.SEED)
+    shuffled = examples[:]
+    rng.shuffle(shuffled)
+
+    n = len(shuffled)
+    train_end = int(n * Config.TRAIN_SET_SIZE)
+    cal_end = train_end + int(n * Config.CALIBRATION_SET_SIZE)
+
+    calibration = shuffled[train_end:cal_end]
+    test = shuffled[cal_end:]
+
+    cal_preds = np.asarray([ex.prediction for ex in calibration], dtype=float)
+    cal_targets = np.asarray([ex.target for ex in calibration], dtype=float)
+    test_preds = np.asarray([ex.prediction for ex in test], dtype=float)
+    test_targets = np.asarray([ex.target for ex in test], dtype=float)
+    return cal_preds, test_preds, cal_targets, test_targets
 
 
 def _build_target_matrix(targets: Sequence[List[int]], num_classes: int, multilabel: bool) -> np.ndarray:
@@ -244,6 +304,124 @@ def _build_target_matrix(targets: Sequence[List[int]], num_classes: int, multila
 def _safe_logit(values: np.ndarray) -> np.ndarray:
     clipped = np.clip(values, EPS, 1.0 - EPS)
     return np.log(clipped) - np.log(1.0 - clipped)
+
+
+def _regression_bin_stats(preds: np.ndarray, targets: np.ndarray, n_bins: int = 10) -> Dict[str, np.ndarray | Tuple[float, float] | float]:
+    if preds.size == 0 or targets.size == 0:
+        empty = np.full(n_bins, np.nan, dtype=float)
+        zeros = np.zeros(n_bins, dtype=int)
+        return {
+            "bin_centers": empty,
+            "bin_pred_means": empty,
+            "bin_true_means": empty,
+            "bin_counts": zeros,
+            "ece": float("nan"),
+            "plot_x_limits": (0.0, 1.0),
+            "plot_y_limits": (0.0, 1.0),
+            "plot_axis_equal": True,
+        }
+
+    preds = np.asarray(preds, dtype=float).ravel()
+    targets = np.asarray(targets, dtype=float).ravel()
+    if preds.size != targets.size:
+        raise ValueError("Length mismatch between predictions and targets for regression stats")
+
+    pred_min = float(np.min(preds))
+    pred_max = float(np.max(preds))
+    if pred_max == pred_min:
+        span = max(1.0, abs(pred_max)) or 1.0
+        edges = np.linspace(pred_min - span * 0.5, pred_max + span * 0.5, n_bins + 1)
+    else:
+        edges = np.linspace(pred_min, pred_max, n_bins + 1)
+    bin_centers = (edges[:-1] + edges[1:]) / 2.0
+    bin_pred_means = np.full(n_bins, np.nan, dtype=float)
+    bin_true_means = np.full(n_bins, np.nan, dtype=float)
+    bin_counts = np.zeros(n_bins, dtype=int)
+
+    for i in range(n_bins):
+        if i == n_bins - 1:
+            mask = (preds >= edges[i]) & (preds <= edges[i + 1])
+        else:
+            mask = (preds >= edges[i]) & (preds < edges[i + 1])
+        count = int(mask.sum())
+        bin_counts[i] = count
+        if count == 0:
+            continue
+        bin_pred_means[i] = float(np.mean(preds[mask]))
+        bin_true_means[i] = float(np.mean(targets[mask]))
+
+    total = bin_counts.sum()
+    if total > 0:
+        diffs = np.abs(np.nan_to_num(bin_pred_means - bin_true_means, nan=0.0))
+        ece = float(np.dot(bin_counts, diffs) / total)
+    else:
+        ece = float("nan")
+
+    y_min = float(np.nanmin(bin_true_means)) if np.isfinite(bin_true_means).any() else float(np.min(targets))
+    y_max = float(np.nanmax(bin_true_means)) if np.isfinite(bin_true_means).any() else float(np.max(targets))
+    plot_x_limits = (float(min(pred_min, y_min)), float(max(pred_max, y_max)))
+    plot_y_limits = plot_x_limits
+
+    return {
+        "bin_centers": bin_centers,
+        "bin_pred_means": bin_pred_means,
+        "bin_true_means": bin_true_means,
+        "bin_counts": bin_counts,
+        "ece": ece,
+        "plot_x_limits": plot_x_limits,
+        "plot_y_limits": plot_y_limits,
+        "plot_axis_equal": True,
+    }
+
+
+def _evaluate_regression(preds: np.ndarray, targets: np.ndarray) -> Dict[str, float]:
+    preds = np.asarray(preds, dtype=float).ravel()
+    targets = np.asarray(targets, dtype=float).ravel()
+    if preds.size == 0 or targets.size == 0:
+        return {}
+    if preds.size != targets.size:
+        raise ValueError("Predictions and targets must have the same length for regression evaluation")
+
+    mae = mean_absolute_error(targets, preds)
+    rmse = float(np.sqrt(mean_squared_error(targets, preds)))
+    try:
+        pearson, _ = stats.pearsonr(targets, preds)
+    except ValueError:
+        pearson = float("nan")
+    try:
+        r2 = r2_score(targets, preds)
+    except ValueError:
+        r2 = float("nan")
+
+    bin_stats = _regression_bin_stats(preds, targets)
+    return {
+        "mae": float(mae),
+        "rmse": rmse,
+        "r2": float(r2),
+        "pearson": float(pearson),
+        "ece": float(bin_stats["ece"]),
+    }
+
+
+def _build_regression_plot_dict(preds: np.ndarray, targets: np.ndarray) -> Dict[str, object]:
+    preds = np.asarray(preds, dtype=float).ravel()
+    targets = np.asarray(targets, dtype=float).ravel()
+    residuals = targets - preds
+    bin_stats = _regression_bin_stats(preds, targets)
+    payload: Dict[str, object] = {
+        "predictions": preds.tolist(),
+        "targets": targets.tolist(),
+        "residuals": residuals.tolist(),
+        "bin_centers": bin_stats["bin_centers"].tolist(),
+        "bin_pred_means": bin_stats["bin_pred_means"].tolist(),
+        "bin_true_means": bin_stats["bin_true_means"].tolist(),
+        "bin_counts": bin_stats["bin_counts"].tolist(),
+        "plot_x_limits": list(bin_stats["plot_x_limits"]),
+        "plot_y_limits": list(bin_stats["plot_y_limits"]),
+        "plot_axis_equal": bool(bin_stats["plot_axis_equal"]),
+        "ece": float(bin_stats["ece"]),
+    }
+    return payload
 
 
 class PlattScaler:
@@ -286,6 +464,31 @@ class PlattScaler:
         normalized = calibrated / safe_sum
         normalized[~np.isfinite(normalized)] = 1.0 / calibrated.shape[1]
         return normalized
+
+
+class IsotonicCalibrator:
+    def __init__(self) -> None:
+        self._model: Optional[IsotonicRegression] = None
+
+    def fit(self, preds: np.ndarray, targets: np.ndarray) -> None:
+        preds = np.asarray(preds, dtype=float).ravel()
+        targets = np.asarray(targets, dtype=float).ravel()
+        if preds.size == 0 or targets.size == 0:
+            self._model = None
+            return
+        if np.allclose(preds, preds[0]):
+            # Isotonic regression cannot fit constant inputs robustly.
+            self._model = None
+            return
+        model = IsotonicRegression(out_of_bounds="clip")
+        model.fit(preds, targets)
+        self._model = model
+
+    def transform(self, preds: np.ndarray) -> np.ndarray:
+        preds = np.asarray(preds, dtype=float).ravel()
+        if self._model is None or preds.size == 0:
+            return preds
+        return self._model.predict(preds)
 
 
 def _evaluate_single_label(probs: np.ndarray, targets: Sequence[List[int]]) -> Dict[str, float]:
@@ -470,12 +673,94 @@ def _run_baselines(dataset: str, model: str, output_path: Path) -> Tuple[Dict, O
             "class_labels": class_labels,
             "baselines": baseline_stats,
         }
+        payload["plot_payloads"] = {
+            "identity": identity_dict,
+            "platt": platt_dict,
+        }
+        payload["plot_labels"] = {"identity": "Identity", "platt": "Platt"}
 
         sanitized = _replace_nan_with_none(payload)
         serializable = convert_to_serializable(sanitized)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
         return serializable, identity_dict, platt_dict, multilabel
+    finally:
+        Config.MODEL_NAME_OR_PATH = original_model
+        Config.DS_TYPE = original_dataset
+        Config.update_paths()
+
+
+def _run_regression_baselines(dataset: str, model: str, output_path: Path) -> Tuple[Dict, Optional[Dict], Optional[Dict], bool]:
+    original_model = Config.MODEL_NAME_OR_PATH
+    original_dataset = Config.DS_TYPE
+    try:
+        Config.update_model_and_dataset(model, dataset)
+        Config.update_paths()
+
+        results_path = Path(Config.RESULTS_FILE)
+        if not results_path.exists():
+            raise FileNotFoundError(f"Results file not found: {results_path}")
+
+        raw_results = _load_results(results_path, dataset)
+        examples = _collect_regression_examples(raw_results)
+        if not examples:
+            raise RuntimeError(f"No usable regression predictions found for dataset '{dataset}'")
+
+        metrics_history: Dict[str, List[Dict[str, float]]] = {"identity": [], "isotonic": []}
+        identity_dict: Optional[Dict[str, object]] = None
+        isotonic_dict: Optional[Dict[str, object]] = None
+
+        num_repeats = max(1, int(getattr(Config, "NUM_REPEATS", 1)))
+        for repeat_idx in range(num_repeats):
+            rng = np.random.default_rng(Config.SEED + repeat_idx)
+            cal_preds, test_preds, cal_targets, test_targets = _split_regression_examples(examples, rng)
+            if test_preds.size == 0 or test_targets.size == 0:
+                continue
+
+            identity_metrics = _evaluate_regression(test_preds, test_targets)
+            if identity_metrics:
+                metrics_history["identity"].append(identity_metrics)
+            if identity_dict is None:
+                identity_dict = _build_regression_plot_dict(test_preds, test_targets)
+
+            if cal_preds.size == 0 or cal_targets.size == 0:
+                continue
+
+            calibrator = IsotonicCalibrator()
+            calibrator.fit(cal_preds, cal_targets)
+            calibrated_preds = calibrator.transform(test_preds)
+            isotonic_metrics = _evaluate_regression(calibrated_preds, test_targets)
+            if isotonic_metrics:
+                metrics_history["isotonic"].append(isotonic_metrics)
+            if isotonic_dict is None:
+                isotonic_dict = _build_regression_plot_dict(calibrated_preds, test_targets)
+
+        if not metrics_history["identity"]:
+            raise RuntimeError(f"No valid regression baseline evaluations for dataset '{dataset}'")
+
+        baseline_stats = {
+            scheme: _aggregate_metric_dicts(entries)
+            for scheme, entries in metrics_history.items()
+        }
+
+        payload: Dict[str, object] = {
+            "dataset": dataset,
+            "model": model,
+            "results_file": str(results_path),
+            "num_examples": len(examples),
+            "baselines": baseline_stats,
+        }
+        payload["plot_payloads"] = {
+            "identity": identity_dict,
+            "isotonic": isotonic_dict,
+        }
+        payload["plot_labels"] = {"identity": "Identity", "isotonic": "Isotonic"}
+
+        sanitized = _replace_nan_with_none(payload)
+        serializable = convert_to_serializable(sanitized)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+        return serializable, identity_dict, isotonic_dict, False
     finally:
         Config.MODEL_NAME_OR_PATH = original_model
         Config.DS_TYPE = original_dataset
@@ -543,8 +828,10 @@ def main() -> None:
         for dataset in datasets:
             short_model = model_name.split("/")[-1]
             output_path = OUTPUT_DIR / dataset / f"{short_model}.json"
+            task_type = _infer_task_type(dataset)
+            runner = _run_regression_baselines if task_type == "regression_tasks" else _run_baselines
             try:
-                payload, identity_dict, platt_dict, is_multilabel = _run_baselines(dataset, model_name, output_path)
+                payload, identity_dict, platt_dict, is_multilabel = runner(dataset, model_name, output_path)
             except Exception as exc:  # noqa: BLE001
                 print(f"[warn] Skipping {model_name} on {dataset}: {exc}")
                 continue
@@ -556,15 +843,27 @@ def main() -> None:
                     "dataset": dataset,
                     "multilabel": is_multilabel,
                     "entries": [],
-                    "task_type": _infer_task_type(dataset),
+                    "task_type": task_type,
                 },
             )
             plot_bucket["dataset"] = dataset
+            plot_bucket["task_type"] = task_type
             model_label = short_model
-            if identity_dict:
-                plot_bucket["entries"].append({"label": f"{model_label} · Identity", "results": identity_dict})
-            if platt_dict:
-                plot_bucket["entries"].append({"label": f"{model_label} · Platt", "results": platt_dict})
+            plot_labels = payload.get("plot_labels") or {}
+            plot_payloads = payload.get("plot_payloads") or {}
+            if plot_payloads:
+                for scheme_key, results in plot_payloads.items():
+                    if not results:
+                        continue
+                    scheme_label = plot_labels.get(scheme_key, scheme_key.title())
+                    plot_bucket["entries"].append(
+                        {"label": f"{model_label} · {scheme_label}", "results": results, "scheme": scheme_key}
+                    )
+            else:
+                if identity_dict:
+                    plot_bucket["entries"].append({"label": f"{model_label} · Identity", "results": identity_dict})
+                if platt_dict:
+                    plot_bucket["entries"].append({"label": f"{model_label} · Platt", "results": platt_dict})
 
     _write_metrics_csv(rows, args.csv_output)
 
@@ -578,6 +877,7 @@ def main() -> None:
             "dataset": dataset,
             "entries": entries,
             "multilabel": bool(info.get("multilabel")),
+            "task_type": task_type,
         }
         task_groups.setdefault(task_type, []).append(record)
 

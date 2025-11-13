@@ -783,7 +783,7 @@ if __name__ == "__main__":
                 Config.update_model_and_dataset(model_name, dataset_name)
                 
                 #1: Get model responses
-                #run_inference()
+                run_inference()
                 #2: Get conformal prediction results
                 #run_conformal_prediction()
                 
