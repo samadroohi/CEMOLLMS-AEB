@@ -70,7 +70,7 @@ def run_analysis(model_name, dataset_name):
         cp_metrics = {}
         top_p_metrics = {}
         
-        if Config.DS_TYPE in Config.TASK_TYPES["regression"]:
+        if Config.DS_TYPE in Config.TASK_TYPES["regression_tasks"]:
             print("\nRegression Analysis Results:")
             print(f"Pearson Correlation Coefficient: {performance_metrics['pearson_correlation']:.4f}")
             print(f"P-value: {performance_metrics['p_value']:.4f}")

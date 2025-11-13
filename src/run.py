@@ -1,8 +1,6 @@
 import os
 from collections import defaultdict
-
 from pathlib import Path
-
 from sklearn.preprocessing import scale
 import torch
 from transformers import LlamaTokenizer, AutoTokenizer, AutoModelForCausalLM, AutoConfig
@@ -12,6 +10,14 @@ import random
 import numpy as np
 import argparse
 from tqdm import tqdm
+from conformalprediction.conformalizedquantileregression import ConformalizedQuantileRegressionPredictor
+from numpy.lib.format import open_memmap
+from conformalprediction.quantileregression import QuantileRegressor
+from utils import  *
+from joblib import dump, load  # used for caching the quantile regressor
+import time
+
+
 
 if __package__ is None or __package__ == "":
     import sys
@@ -311,7 +317,7 @@ def run_inference():
                         "row_index": write_cursor + j
                     }
                     #if regression, parse valence
-                    if Config.DS_TYPE == "regression" or Config.DS_TYPE == "local_regression" or Config.DS_TYPE == "weighted_regression":
+                    if Config.DS_TYPE == "regression_task":
                         if getattr(Config, "SAVE_VALENCE", False):
                             v = parse_first_float_0_1(response)
                             if v is not None:
@@ -362,6 +368,42 @@ def run_inference():
     gc.collect()
 
 def run_conformal_prediction():
+     # --- tiny helper: linear interpolation over a dict {tau: vector} ---
+    def _interp(preds_dict, q_target, q_grid, allow_extrapolate=False):
+        if q_target in preds_dict:
+            return preds_dict[q_target]
+        qs = np.array(sorted(q_grid))
+        hi = int(np.searchsorted(qs, q_target, side="left"))
+        if hi == 0:
+            if not allow_extrapolate: raise ValueError("q_target below grid; extend grid.")
+            return preds_dict[qs[0]]
+        if hi == len(qs):
+            if not allow_extrapolate: raise ValueError("q_target above grid; extend grid.")
+            return preds_dict[qs[-1]]
+        q0, q1 = float(qs[hi-1]), float(qs[hi])
+        p0, p1 = preds_dict[q0], preds_dict[q1]
+        w = (q_target - q0) / max(q1 - q0, 1e-12)
+        return (1 - w) * p0 + w * p1
+
+    def _augment_with_metadata(X, preds, centers):
+        """Concatenate scalar metadata (LLM point predictions, optional valence) to embeddings."""
+        extras = []
+        preds_arr = np.asarray(preds, dtype=np.float32).reshape(-1, 1)
+        extras.append(preds_arr)
+
+        if centers is not None:
+            centers = np.asarray(centers, dtype=np.float32)
+            if not np.all(np.isnan(centers)):
+                if np.any(np.isnan(centers)):
+                    fill = float(np.nanmean(centers))
+                    centers = np.where(np.isnan(centers), fill, centers)
+                extras.append(centers.reshape(-1, 1))
+
+        if extras:
+            extra_cols = np.concatenate(extras, axis=1)
+            return np.concatenate([X, extra_cols], axis=1)
+        return X
+    
     dataset_type = Config.DS_TYPE
     Config.update_paths()
 
@@ -387,14 +429,18 @@ def run_conformal_prediction():
 
     is_multiclass_task = dataset_type in Config.TASK_TYPES.get("multiclass_classification", [])
     is_ordinal_task = dataset_type in Config.TASK_TYPES.get("ordinal_classification", [])
+    is_regression_task = dataset_type in Config.TASK_TYPES.get("regression_tasks", [])
 
     original_multiclass_mode = getattr(Config, "MULTICLASS_CP_MODE", None)
     original_ordinal_mode = getattr(Config, "ORDINAL_CP_MODE", None)
+    original_regression_mode = getattr(Config, "REGRESSION_CP_MODE", None)
 
     if is_multiclass_task:
         modes_to_run = Config.get_multiclass_modes()
     elif is_ordinal_task:
         modes_to_run = Config.get_ordinal_modes()
+    elif is_regression_task:
+        modes_to_run = Config.get_regression_modes()
     else:
         modes_to_run = [None]
 
@@ -414,6 +460,7 @@ def run_conformal_prediction():
         probs_train = [r["probs"] for r in train_split]
         idx_train = [r["row_index"] for r in train_split]
 
+        input_calibration = [r["input"] for r in calibration_split]
         true_calibration = [r["true_value"] for r in calibration_split]
         pred_calibration = [r["prediction"] for r in calibration_split]
         probs_calibration = [r["probs"] for r in calibration_split]
@@ -443,7 +490,7 @@ def run_conformal_prediction():
         else:
             X_test = np.empty((0, D), dtype=np.float32)
 
-        if dataset_type in Config.TASK_TYPES['regression'] or dataset_type in Config.TASK_TYPES['local_regression'] or dataset_type in Config.TASK_TYPES['weighted_regression']:
+        if dataset_type in Config.TASK_TYPES['regression_tasks']:
             center_train = np.array([r.get("valence", None) for r in train_split], dtype=float)
             center_calibration = np.array([r.get("valence", None) for r in calibration_split], dtype=float)
             center_test = np.array([r.get("valence", None) for r in test_split], dtype=float)
@@ -472,57 +519,225 @@ def run_conformal_prediction():
             if is_multiclass_task:
                 Config.MULTICLASS_CP_MODE = mode
                 Config.update_paths()
+                Config.TASK_TYPE = "multiclass_classification"
                 print(f"\n=== Multiclass CP mode: {mode} ===")
             elif is_ordinal_task:
                 Config.ORDINAL_CP_MODE = mode
                 Config.update_paths()
+                Config.TASK_TYPE = "ordinal_classification"
                 print(f"\n=== Ordinal CP mode: {mode} ===")
+            elif is_regression_task:
+                Config.REGRESSION_CP_MODE = mode
+                Config.update_paths()
+                Config.TASK_TYPE = "regression_tasks"
+                print(f"\n=== Regression CP mode: {mode} ===")
 
-            for alpha in Config.CP_ALPHA:
-                matched_type = False
-                for ttype in Config.TASK_TYPES:
-                    if Config.DS_TYPE in Config.TASK_TYPES[ttype]:
-                        matched_type = True
-                        baseline_cp = get_predictor(ttype, alpha)
-                        if ttype == "weighted_regression" or ttype == "local_regression":
-                            # TBD: Use local clustered CP
-                            pass
+            #for alpha in Config.CP_ALPHA:            
+            start_time = time.time()
+            if is_regression_task:
+                if (mode == "quantilized_regression"):
+                        # minimal tau set from CP_ALPHA (no retraining per alpha)
+                    taus_needed = sorted({
+                        round(a/2.0, 4) for a in Config.CP_ALPHA
+                    } | {
+                        round(1.0 - a/2.0, 4) for a in Config.CP_ALPHA
+                    })
+                    print(f"[DEBUG] Taus needed for {len(Config.CP_ALPHA)} alphas: {len(taus_needed)} quantiles = {taus_needed}")
+
+                    pred_train_numeric = np.asarray(pred_train, dtype=np.float32)
+                    pred_cal_numeric = np.asarray(pred_calibration, dtype=np.float32)
+                    pred_test_numeric = np.asarray(pred_test, dtype=np.float32)
+
+                    X_train_aug = _augment_with_metadata(X_train, pred_train_numeric, center_train)
+                    X_cal_aug = _augment_with_metadata(X_cal, pred_cal_numeric, center_cal)
+                    X_test_aug = _augment_with_metadata(X_test, pred_test_numeric, center_test)
+
+                    print(
+                        f"[DEBUG] Feature shapes after augmentation: train={X_train_aug.shape}, cal={X_cal_aug.shape}, test={X_test_aug.shape}"
+                    )
+
+                    # cache path for the quantile regressor (per model+dataset+taus)
+                    qr_cache_dir = os.path.join(getattr(Config, "ARTIFACTS_DIR", "."), "qr_models")
+                    os.makedirs(qr_cache_dir, exist_ok=True)
+                    qr_cache_name = (
+                        f"qr_{Config.MODEL_NAME_OR_PATH.replace('/','_')}_{dataset_type.replace(',','_')}_{Config.CQR_CACHE_VERSION}.joblib"
+                    )
+                    qr_cache_path = os.path.join(qr_cache_dir, qr_cache_name)
+
+                    # load or train once
+                    if os.path.exists(qr_cache_path):
+                        print(f"[DEBUG] Loading cached quantile regressor: {qr_cache_path}")
+                        qr_load_start = time.time()
+                        qr = load(qr_cache_path)
+                        print(f"[DEBUG] Cache loaded in {time.time() - qr_load_start:.2f}s")
+                    else:
+                        print(f"[DEBUG] Training quantile regressor with {len(taus_needed)} quantiles on {len(X_train)} samples...")
+                        print(
+                            f"[DEBUG] ⚙️  Hyperparameter grid size={len(Config.CQR_PARAM_GRID)} | CV folds={Config.CQR_CV_FOLDS}"
+                        )
+                        qr_train_start = time.time()
+                        qr = QuantileRegressor(
+                            quantiles=taus_needed,
+                            param_grid=Config.CQR_PARAM_GRID,
+                            cv_folds=Config.CQR_CV_FOLDS,
+                            use_pca=Config.CQR_USE_PCA,
+                            pca_variance=Config.CQR_PCA_VARIANCE,
+                            tail_weight=Config.CQR_PINBALL_TAIL_WEIGHT,
+                            early_stopping=Config.CQR_EARLY_STOPPING,
+                            early_stopping_rounds=Config.CQR_EARLY_STOPPING_ROUNDS,
+                            early_stopping_tol=Config.CQR_EARLY_STOPPING_TOL,
+                            validation_fraction=Config.CQR_VALIDATION_FRACTION,
+                        )
+                        qr.fit(X_train_aug, y_train)
+                        print(f"[DEBUG] Training completed in {time.time() - qr_train_start:.2f}s")
+                        print(f"[DEBUG] Saving to cache: {qr_cache_path}")
+                        dump(qr, qr_cache_path, compress=3)
+                        print(f"[DEBUG] Cache saved")
+                    # precompute cal/test predictions once for the whole tau set (OPTIMIZED: batch prediction)
+                    print(f"[DEBUG] Making batch predictions on calibration set ({len(X_cal_aug)} samples)...")
+                    pred_cal_start = time.time()
+                    preds_cal_all = qr.predict_quantiles(X_cal_aug, quantiles=taus_needed)   # shape (n_cal, len(taus_needed))
+                    print(f"[DEBUG] Cal predictions done in {time.time() - pred_cal_start:.2f}s: shape={preds_cal_all.shape}")
+                    
+                    print(f"[DEBUG] Making batch predictions on test set ({len(X_test_aug)} samples)...")
+                    pred_test_start = time.time()
+                    preds_test_all = qr.predict_quantiles(X_test_aug, quantiles=taus_needed)  # shape (n_test, len(taus_needed))
+                    print(f"[DEBUG] Test predictions done in {time.time() - pred_test_start:.2f}s: shape={preds_test_all.shape}")
+                    
+                    # Convert to dict format {tau: array}
+                    cal_preds_all = {tau: preds_cal_all[:, i] for i, tau in enumerate(sorted(taus_needed))}
+                    test_preds_all = {tau: preds_test_all[:, i] for i, tau in enumerate(sorted(taus_needed))}
+
+                    # CQR calibrator
+                    cqr = ConformalizedQuantileRegressionPredictor(asymmetric=True)
+
+                    for alpha in Config.CP_ALPHA:
+                        print(f"\n[DEBUG] Processing alpha={alpha:.2f} ({1-alpha:.1%} confidence)...")
+                        alpha_start = time.time()
+                        
+                        q_lo = float(round(alpha/2.0, 4))
+                        q_hi = float(round(1.0 - alpha/2.0, 4))
+
+                        # pick or interpolate the base quantiles
+                        if q_lo in cal_preds_all and q_hi in cal_preds_all:
+                            lower_cal, upper_cal = cal_preds_all[q_lo], cal_preds_all[q_hi]
+                            lower_test, upper_test = test_preds_all[q_lo], test_preds_all[q_hi]
                         else:
-                            q_hat = baseline_cp.fit(true_calibration, pred_calibration, probs_calibration, alpha)
-                            conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, probs_test, q_hat)
+                            print(f"[DEBUG]   Interpolating q_lo={q_lo}, q_hi={q_hi}")
+                            lower_cal  = _interp(cal_preds_all,  q_lo, taus_needed)
+                            upper_cal  = _interp(cal_preds_all,  q_hi, taus_needed)
+                            lower_test = _interp(test_preds_all, q_lo, taus_needed)
+                            upper_test = _interp(test_preds_all, q_hi, taus_needed)
 
-                            if hasattr(baseline_cp, "_empty_prob_calibration") and hasattr(baseline_cp, "_empty_prob_test"):
-                                empty_cal = getattr(baseline_cp, "_empty_prob_calibration", 0)
-                                empty_test = getattr(baseline_cp, "_empty_prob_test", 0)
-                                if empty_cal or empty_test:
-                                    print(
-                                        f"Warning: skipped {empty_cal} calibration and {empty_test} test samples with empty probability vectors."
-                                    )
+                        probs_cal  = {"lower": lower_cal,  "upper": upper_cal}
+                        probs_test = {"lower": lower_test, "upper": upper_test}
 
+                        # α-specific conformal calibration
+                        print(f"[DEBUG]   Calibrating CQR...")
+                        Q_pair = cqr.fit(y_true=y_cal, y_pred=None, probs_calibration=probs_cal, alpha=alpha)
+
+                        # intervals on test
+                        print(f"[DEBUG]   Predicting on test set...")
+                        lower, upper = cqr.predict(y_pred=None, probs_test=probs_test, quantiles=Q_pair)
+
+                        coverage = float(np.mean((y_test >= lower) & (y_test <= upper)))
+                        avg_size = float(np.mean(upper - lower))
+                        std_size = float(np.std(upper - lower))
+                        min_size = float(np.min(upper - lower))
+                        max_size = float(np.max(upper - lower))
+                        print(f"[DEBUG]   ✓ α={alpha:.2f} → coverage={coverage:.3f}, size={avg_size:.3f}±{std_size:.3f} [{min_size:.3f}, {max_size:.3f}] ({time.time()-alpha_start:.2f}s)")
+                        print(f"[DEBUG]      🔹 CQR [ADAPTIVE]: Intervals vary by sample (std={std_size:.3f})")
+
+                        conformal_results = ((lower, upper), coverage, avg_size, y_test)
+                        # probs_test = base quantiles; keep if your saver expects them
+                        print(f"[DEBUG]   Saving results...")
+                        #save_cp_results(dataset_type, input_test, y_test, pred_test, probs_test, conformal_results, alpha)
+                        total_time = time.time() - start_time
+                        record = build_cp_result_record(
+                            dataset_type,
+                            true_test,
+                            pred_test,
+                            probs_test,
+                            conformal_results,
+                            alpha,
+                            repeat_idx,
+                            mode=mode,
+                            seed=Config.SEED + repeat_idx,
+                            predictor=baseline_cp,
+                            timestamp=total_time
+                        )
+                        result_path = Config.CONFORMAL_RESULTS_FILE
+                        aggregated_results_by_path[result_path].append(record)
+                elif mode == "regression":
+                    for alpha in Config.CP_ALPHA:
+                        baseline_cp = get_predictor(Config.TASK_TYPE, alpha)
+                        alpha_start = time.time()
+                        q_hat = baseline_cp.fit(true_calibration, pred_calibration, probs_calibration, alpha)
+                        conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, probs_test, q_hat)
+                        
+                        # Extract interval info for standard CP
+                        lower, upper = conformal_results[0]
+                        coverage = conformal_results[1]
+                        avg_size = conformal_results[2]
+                        std_size = float(np.std(upper - lower)) if hasattr(upper, '__len__') else 0.0
+                        
+                        print(f"[DEBUG] [{Config.TASK_TYPE}] α={alpha:.2f} → coverage={coverage:.3f}, size={avg_size:.3f}±{std_size:.3f} ({time.time()-alpha_start:.2f}s)")
+                        print(f"[DEBUG]      🔹 Standard [CONSTANT]: All samples get same fixed interval")
+                        total_time = time.time() - start_time
+                        record = build_cp_result_record(
+                            dataset_type,
+                            true_test,
+                            pred_test,
+                            probs_test,
+                            conformal_results,
+                            alpha,
+                            repeat_idx,
+                            mode=mode,
+                            seed=Config.SEED + repeat_idx,
+                            predictor=baseline_cp,
+                            timestamp=total_time
+                        )
+                        result_path = Config.CONFORMAL_RESULTS_FILE
+                        aggregated_results_by_path[result_path].append(record)
+                else:
+                    raise ValueError(f"Unknown regression CP mode: {mode}")
+            else: #if it is not regression_task
+                for alpha in Config.CP_ALPHA:
+                    baseline_cp = get_predictor(Config.TASK_TYPE, alpha)
+                    q_hat = baseline_cp.fit(true_calibration, pred_calibration, probs_calibration, alpha)
+                    conformal_results = baseline_cp.get_conformal_results(true_test, pred_test, probs_test, q_hat)
+
+                    if hasattr(baseline_cp, "_empty_prob_calibration") and hasattr(baseline_cp, "_empty_prob_test"):
+                        empty_cal = getattr(baseline_cp, "_empty_prob_calibration", 0)
+                        empty_test = getattr(baseline_cp, "_empty_prob_test", 0)
+                        if empty_cal or empty_test:
                             print(
-                                f" Task: {ttype} Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}"
+                                f"Warning: skipped {empty_cal} calibration and {empty_test} test samples with empty probability vectors."
                             )
-                            if getattr(baseline_cp, "tuned_tau", None) is not None:
-                                print(
-                                    f"  -> Hybrid tau tuned to {baseline_cp.tuned_tau:.3f} (coverage target >= global, size <= mondrian on inner split)"
-                                )
-                            current_mode = mode if (is_multiclass_task or is_ordinal_task) else None
-                            record = build_cp_result_record(
-                                dataset_type,
-                                true_test,
-                                pred_test,
-                                probs_test,
-                                conformal_results,
-                                alpha,
-                                repeat_idx,
-                                mode=current_mode,
-                                seed=Config.SEED + repeat_idx,
-                                predictor=baseline_cp,
-                            )
-                            result_path = Config.CONFORMAL_RESULTS_FILE
-                            aggregated_results_by_path[result_path].append(record)
-                if not matched_type:
-                    print(f"Dataset type {Config.DS_TYPE} not found in TASK_TYPES; skipping conformal prediction.")
+
+                    print(
+                        f" Task: {Config.TASK_TYPE} Confidence: {1-alpha:.2f} Coverage: {conformal_results[1]:.3f}  Size: {conformal_results[2]:.2f}"
+                    )
+                    if getattr(baseline_cp, "tuned_tau", None) is not None:
+                        print(
+                            f"  -> Hybrid tau tuned to {baseline_cp.tuned_tau:.3f} (coverage target >= global, size <= mondrian on inner split)"
+                        )
+                    total_time = time.time() - start_time
+                    record = build_cp_result_record(
+                        dataset_type,
+                        true_test,
+                        pred_test,
+                        probs_test,
+                        conformal_results,
+                        alpha,
+                        repeat_idx,
+                        mode=mode,
+                        seed=Config.SEED + repeat_idx,
+                        predictor=baseline_cp,
+                        timestamp=total_time
+                    )
+                    result_path = Config.CONFORMAL_RESULTS_FILE
+                    aggregated_results_by_path[result_path].append(record)
 
     for path, records in aggregated_results_by_path.items():
         save_cp_results(path, records)
@@ -531,33 +746,33 @@ def run_conformal_prediction():
         Config.MULTICLASS_CP_MODE = original_multiclass_mode
     if is_ordinal_task:
         Config.ORDINAL_CP_MODE = original_ordinal_mode
+    if is_regression_task:
+        Config.REGRESSION_CP_MODE = original_regression_mode
     Config.update_paths()
 
 if __name__ == "__main__":
     analysis = False # False if you want to run inference and conformal prediction
-    model_names = [
-        "lzw1008/Emollama-7b",
-        "lzw1008/Emollama-chat-7b",
-        "lzw1008/Emobloom-7b",
-        "lzw1008/Emollama-chat-13b",
-        "lzw1008/Emoopt-13b"
-    ]
-    dataset_names = [
-        "V-oc",
-        "EI-oc",  
-        "SST5",
-          
+    #model_names = [
+      #  "lzw1008/Emollama-7b",
+        #"lzw1008/Emollama-chat-7b",
+        #"lzw1008/Emobloom-7b",
+        #"lzw1008/Emollama-chat-13b",
+        #"lzw1008/Emoopt-13b"
+    #]
+    #dataset_names = [
+        #"V-oc",
+        #"EI-oc",  
+        #"SST5",
         #"EI-reg", 
         #"V-reg", 
         #"V-A,V-M,V-NYT,V-T", 
         #"Emobank", 
         #"SST", 
-        "E-c",
-        "GoEmotions"
-        
-    ]   
-    for model_name in model_names:
-        for dataset_name in dataset_names:
+        #"E-c",
+        #"GoEmotions"
+    #]  
+    for model_name in Config.BASELINE_MODEL_NAMES:
+        for dataset_name in Config.BASELINE_DATASETS:
             if not analysis:
                 #if model_name includes llama
                 if "llama" in model_name:
@@ -570,7 +785,7 @@ if __name__ == "__main__":
                 #1: Get model responses
                 #run_inference()
                 #2: Get conformal prediction results
-                run_conformal_prediction()
+                #run_conformal_prediction()
                 
                 # Clear GPU cache after processing each dataset
                 if torch.cuda.is_available():

@@ -33,12 +33,8 @@ def get_predictor(ds_type, alpha):
         mode = getattr(Config, "MULTICLASS_CP_MODE", "hybrid")
         tau = float(getattr(Config, "MULTICLASS_RARE_SHRINK", 10.0))
         return MulticlassConformalPredictor(classes=classes, mode=mode, rare_shrink_tau=tau)
-    elif ds_type == "regression":
+    elif ds_type == "regression_tasks":
         return ConformalRegressionPredictor()
-    if ds_type == "weighted_regression":     # hybrid normalized + local 
-        return None
-    elif ds_type == "local_regression":      # pure local/weighted CP
-        return None
     
     elif ds_type == "ordinal_classification":
         class_map = Config.VALID_D_TYPES.get(Config.DS_TYPE, {})
@@ -255,7 +251,7 @@ def cleaning_results_classification(results,ds_type):
     pass
 
 def cleaning_results(results,ds_type):
-    if ds_type in Config.TASK_TYPES["regression"]:
+    if ds_type in Config.TASK_TYPES["regression_tasks"]:
         return cleaning_results_regression(results,ds_type)
     elif ds_type in Config.TASK_TYPES["classification"]:
         return cleaning_results_classification(results,ds_type)
@@ -279,7 +275,7 @@ def convert_to_serializable(obj):
     return obj
 
 
-def build_cp_result_record(dataset_type, true_test, pred_test, probs_test, conformal_results, alpha, repeat_index, mode=None, seed=None, predictor=None):
+def build_cp_result_record(dataset_type, true_test, pred_test, probs_test, conformal_results, alpha, repeat_index, mode=None, seed=None, predictor=None, timestamp=None):
     prediction_sets = conformal_results[0]
     return {
         "dataset_type": dataset_type,
@@ -294,6 +290,7 @@ def build_cp_result_record(dataset_type, true_test, pred_test, probs_test, confo
         "probs": convert_to_serializable(probs_test),
         "prediction_sets": convert_to_serializable(prediction_sets),
         "tuned_tau": float(getattr(predictor, "tuned_tau", np.nan)) if getattr(predictor, "tuned_tau", None) is not None else None,
+        "timestamp": timestamp
     }
 
 

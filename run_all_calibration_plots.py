@@ -2,32 +2,13 @@
 """Run calibration plots for every model/dataset pair, skipping missing combos."""
 
 from __future__ import annotations
+from src.config import Config
 
 import subprocess
 import sys
 
-MODELS = [
-    "lzw1008/Emollama-7b",
-    "lzw1008/Emobloom-7b",
-    "lzw1008/Emollama-chat-7b",
-    "lzw1008/Emollama-chat-13b",
-    "lzw1008/Emoopt-13b",
-    
-]
 
-DATASETS = [
-    "V-oc",
-    "EI-oc",
-    "SST5",
-    #"EI-reg",
-    #"V-reg",
-    #"V-A,V-M,V-NYT,V-T",
-    #"Emobank",
-    #"SST",
-    "E-c",
-    "GoEmotions",
 
-]
 
 PYTHON = sys.executable
 
@@ -49,9 +30,9 @@ def main() -> None:
     if not run_or_skip([PYTHON, "-m", "src.analysis.calibration_analysis"]):
         sys.exit(1)
 
-    for model in MODELS:
+    for model in Config.BASELINE_MODEL_NAMES:
         short_name = model.split("/")[-1]
-        for dataset in DATASETS:
+        for dataset in Config.BASELINE_DATASETS:
             cmd = [
                 PYTHON,
                 "-m",
@@ -69,7 +50,7 @@ def main() -> None:
         "-m",
         "src.analysis.merged_calibration_plots",
         "--datasets",
-        *DATASETS,
+        *Config.BASELINE_DATASETS,
     ]
     run_or_skip(merge_cmd)
 

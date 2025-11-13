@@ -29,7 +29,7 @@ def analyze_regression_results(results, ds_type, task_types):
         if results["ds_type"] != ds_type:
             raise ValueError(f"No results found for DS_TYPE: {ds_type}")
             
-        if ds_type in task_types["regression"]:
+        if ds_type in task_types["regression_tasks"]:
             # Convert strings to float if necessary and create numpy arrays
             true_values = np.array([float(x) for x in results["true_values"]], dtype=np.float64)
             predictions = np.array([float(x) for x in results["predictions"]], dtype=np.float64)
@@ -247,7 +247,7 @@ def get_performance_metrics(results, ds_type, task_types):
     Returns:
         dict: Dictionary containing appropriate metrics for the task type
     """
-    if ds_type in task_types["regression"]:
+    if ds_type in task_types["regression_tasks"]:
         return analyze_regression_results(results, ds_type, task_types)
     elif ds_type in task_types["classification"]:
         return analyze_classification_results(results, ds_type, task_types)

@@ -728,7 +728,7 @@ def calibration_anlaysis(results, ds_type, output_dir=None):
         calibration_metrics = classification_relibaility_diagram(results[str(Config.CP_ALPHA[0])], ds_type, output_dir=output_dir)
         cp_metrics = cp_diagrams(results, ds_type, output_dir)
         top_p_metrics = top_p_analysis(results[str(Config.CP_ALPHA[0])], ds_type, output_dir)
-    elif ds_type in Config.TASK_TYPES["regression"]:
+    elif ds_type in Config.TASK_TYPES["regression_tasks"]:
         cp_metrics = {'alpha':[],  'coverages': [], 'average_interval_sizes': []}
         for alpha in Config.CP_ALPHA:
             cp_data = regression_calibration_diagram(results[str(alpha)], ds_type, alpha, output_dir=output_dir)

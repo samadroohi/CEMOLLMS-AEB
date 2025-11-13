@@ -10,30 +10,31 @@ class Config:
 
     # ---------- Data paths ----------
     INFER_FILE = "data/AEB.json"
-
+    TASK_TYPE = None
     TASK_TYPES = {
+        "regression_tasks": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank","SST"], 
         "ordinal_classification": ["EI-oc", "V-oc", "SST5", "TDT"], 
-        "weighted_regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank", "SST"],
         "classification": [], 
-        
-        "regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank","SST"], 
-        "local_regression": ["EI-reg", "V-reg", "V-A,V-M,V-NYT,V-T", "Emobank","SST"], 
         "multiclass_classification": [ "GoEmotions", "E-c"]
     }
-
     BASELINE_MODEL_NAMES = [
         "lzw1008/Emollama-7b",
-        "lzw1008/Emobloom-7b",
-        "lzw1008/Emollama-chat-7b",
-        "lzw1008/Emollama-chat-13b",
-        "lzw1008/Emoopt-13b",
+        #"lzw1008/Emobloom-7b",
+        #"lzw1008/Emollama-chat-7b",
+        #"lzw1008/Emollama-chat-13b",
+        #"lzw1008/Emoopt-13b",
     ]
     BASELINE_DATASETS = [
-        "V-oc",
-        "EI-oc",
-        "SST5",
-        "E-c",
-        "GoEmotions",
+        #"V-oc",
+        #"EI-oc",
+        #"SST5",
+        #"E-c",
+        #"GoEmotions",
+        "EI-reg", 
+        #"V-reg", 
+        #"V-A,V-M,V-NYT,V-T", 
+        #"Emobank",
+        #"SST"
     ]
 
     VERBOSE = False
@@ -45,6 +46,9 @@ class Config:
     # ---------- Multiclass CP settings ----------
     MULTICLASS_CP_MODE = "hybrid"  # options: "global", "mondrian", "hybrid"
     MULTICLASS_CP_MODES = ["global", "mondrian", "hybrid"]
+    REGRESSION_CP_MODE = "regression"
+    REGRESSION_CP_MODES = [ "regression",] #"quantilized_regression"]  
+    
     MULTICLASS_RARE_SHRINK = 5     # τ parameter for rare-class shrinkage
 
     # ---------- Ordinal CP settings ----------
@@ -120,6 +124,51 @@ class Config:
     NORMALIZE_EMB = True
     # Storage dtype for hidden vectors (float16 saves space; switch to float32 if you prefer)
     HIDDEN_DTYPE = "float16"  # or "float32"
+
+# ---------- Quantile regressor tuning ----------
+    CQR_USE_PCA = True
+    CQR_PCA_VARIANCE = 0.98
+    CQR_CV_FOLDS = 5
+    CQR_PARAM_GRID = [
+        {
+            "n_estimators": 500,
+            "max_depth": 3,
+            "learning_rate": 0.08,
+            "min_samples_leaf": 5,
+            "subsample": 0.8,
+            "max_features": "sqrt",
+        },
+        {
+            "n_estimators": 700,
+            "max_depth": 4,
+            "learning_rate": 0.06,
+            "min_samples_leaf": 5,
+            "subsample": 0.8,
+            "max_features": "sqrt",
+        },
+        {
+            "n_estimators": 900,
+            "max_depth": 5,
+            "learning_rate": 0.05,
+            "min_samples_leaf": 4,
+            "subsample": 0.9,
+            "max_features": None,
+        },
+        {
+            "n_estimators": 1200,
+            "max_depth": 6,
+            "learning_rate": 0.04,
+            "min_samples_leaf": 3,
+            "subsample": 1.0,
+            "max_features": None,
+        },
+    ]
+    CQR_EARLY_STOPPING = True
+    CQR_EARLY_STOPPING_ROUNDS = 30
+    CQR_EARLY_STOPPING_TOL = 1e-4
+    CQR_VALIDATION_FRACTION = 0.1
+    CQR_PINBALL_TAIL_WEIGHT = 2.0
+    CQR_CACHE_VERSION = "v3"
 
     # ---------- Valid data types ----------
     VALID_D_TYPES = {
@@ -289,3 +338,24 @@ class Config:
 
         default_mode = getattr(cls, "ORDINAL_CP_MODE", None)
         return [default_mode] if default_mode else ["global"]
+    @classmethod
+    def get_regression_modes(cls):
+        """Return the list of regression CP modes to evaluate in the current run."""
+        modes = getattr(cls, "REGRESSION_CP_MODES", None)
+        normalized = []
+        if modes:
+            for mode in modes:
+                mode_str = str(mode).strip().lower()
+                if mode_str:
+                    normalized.append(mode_str)
+
+        if normalized:
+            unique_modes = []
+            for mode in normalized:
+                if mode not in unique_modes:
+                    unique_modes.append(mode)
+            if unique_modes:
+                return unique_modes
+
+        default_mode = getattr(cls, "REGRESSION_CP_MODE", None)
+        return [default_mode] if default_mode else ["regression"]
