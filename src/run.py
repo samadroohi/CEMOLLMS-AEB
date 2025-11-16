@@ -389,19 +389,45 @@ def run_conformal_prediction():
         """Concatenate scalar metadata (LLM point predictions, optional valence) to embeddings."""
         extras = []
         preds_arr = np.asarray(preds, dtype=np.float32).reshape(-1, 1)
+        if np.any(np.isnan(preds_arr)):
+            fill = float(np.nanmean(preds_arr))
+            if not np.isfinite(fill):
+                fill = 0.0
+            preds_arr = np.where(np.isnan(preds_arr), fill, preds_arr)
         extras.append(preds_arr)
 
         if centers is not None:
-            centers = np.asarray(centers, dtype=np.float32)
-            if not np.all(np.isnan(centers)):
-                if np.any(np.isnan(centers)):
-                    fill = float(np.nanmean(centers))
-                    centers = np.where(np.isnan(centers), fill, centers)
-                extras.append(centers.reshape(-1, 1))
+            centers = np.asarray(centers, dtype=np.float32).reshape(-1, 1)
+            if np.any(np.isnan(centers)):
+                fill = float(np.nanmean(centers))
+                if not np.isfinite(fill):
+                    fill = 0.0
+                centers = np.where(np.isnan(centers), fill, centers)
+            extras.append(centers)
 
         if extras:
             extra_cols = np.concatenate(extras, axis=1)
             return np.concatenate([X, extra_cols], axis=1)
+        return X
+
+    def _sanitize_features(X, split_name):
+        """Remove NaNs/Infs (column-mean fill) and fail loudly if any remain."""
+        X = np.asarray(X, dtype=np.float32)
+        if not np.any(~np.isfinite(X)):
+            return X
+
+        X = X.copy()
+        bad_mask = ~np.isfinite(X)
+        if np.any(bad_mask):
+            col_means = np.nanmean(X, axis=0)
+            col_means[~np.isfinite(col_means)] = 0.0
+            rows, cols = np.where(bad_mask)
+            X[rows, cols] = col_means[cols]
+
+        if np.any(~np.isfinite(X)):
+            cols = np.unique(np.where(~np.isfinite(X))[1])
+            raise ValueError(f"{split_name} features still non-finite after sanitization; columns={cols[:10]}")
+
         return X
     
     dataset_type = Config.DS_TYPE
@@ -491,15 +517,15 @@ def run_conformal_prediction():
             X_test = np.empty((0, D), dtype=np.float32)
 
         if dataset_type in Config.TASK_TYPES['regression_tasks']:
-            center_train = np.array([r.get("valence", None) for r in train_split], dtype=float)
-            center_calibration = np.array([r.get("valence", None) for r in calibration_split], dtype=float)
-            center_test = np.array([r.get("valence", None) for r in test_split], dtype=float)
+            center_train = np.array([r.get("prediction", None) for r in train_split], dtype=float)
+            center_calibration = np.array([r.get("prediction", None) for r in calibration_split], dtype=float)
+            center_test = np.array([r.get("prediction", None) for r in test_split], dtype=float)
             if (
                 np.any(np.isnan(center_train))
                 or np.any(np.isnan(center_calibration))
                 or np.any(np.isnan(center_test))
             ):
-                raise ValueError("Missing numeric 'valence' in results. Save it during inference or parse it here.")
+                raise ValueError("Missing numeric 'prediction' in results. Save it during inference or parse it here.")
             m_train = np.asarray(center_train, dtype=np.float32)
             m_cal = np.asarray(center_calibration, dtype=np.float32)
             m_test = np.asarray(center_test, dtype=np.float32)
@@ -548,9 +574,15 @@ def run_conformal_prediction():
                     pred_cal_numeric = np.asarray(pred_calibration, dtype=np.float32)
                     pred_test_numeric = np.asarray(pred_test, dtype=np.float32)
 
-                    X_train_aug = _augment_with_metadata(X_train, pred_train_numeric, center_train)
-                    X_cal_aug = _augment_with_metadata(X_cal, pred_cal_numeric, center_cal)
-                    X_test_aug = _augment_with_metadata(X_test, pred_test_numeric, center_test)
+                    X_train_aug = _sanitize_features(
+                        _augment_with_metadata(X_train, pred_train_numeric, center_train), "train"
+                    )
+                    X_cal_aug = _sanitize_features(
+                        _augment_with_metadata(X_cal, pred_cal_numeric, center_calibration), "calibration"
+                    )
+                    X_test_aug = _sanitize_features(
+                        _augment_with_metadata(X_test, pred_test_numeric, center_test), "test"
+                    )
 
                     print(
                         f"[DEBUG] Feature shapes after augmentation: train={X_train_aug.shape}, cal={X_cal_aug.shape}, test={X_test_aug.shape}"
@@ -663,7 +695,7 @@ def run_conformal_prediction():
                             repeat_idx,
                             mode=mode,
                             seed=Config.SEED + repeat_idx,
-                            predictor=baseline_cp,
+                            predictor=cqr,
                             timestamp=total_time
                         )
                         result_path = Config.CONFORMAL_RESULTS_FILE
@@ -751,26 +783,7 @@ def run_conformal_prediction():
     Config.update_paths()
 
 if __name__ == "__main__":
-    analysis = False # False if you want to run inference and conformal prediction
-    #model_names = [
-      #  "lzw1008/Emollama-7b",
-        #"lzw1008/Emollama-chat-7b",
-        #"lzw1008/Emobloom-7b",
-        #"lzw1008/Emollama-chat-13b",
-        #"lzw1008/Emoopt-13b"
-    #]
-    #dataset_names = [
-        #"V-oc",
-        #"EI-oc",  
-        #"SST5",
-        #"EI-reg", 
-        #"V-reg", 
-        #"V-A,V-M,V-NYT,V-T", 
-        #"Emobank", 
-        #"SST", 
-        #"E-c",
-        #"GoEmotions"
-    #]  
+    analysis = False # False if you want to run inference and conformal prediction 
     for model_name in Config.BASELINE_MODEL_NAMES:
         for dataset_name in Config.BASELINE_DATASETS:
             if not analysis:
@@ -785,7 +798,7 @@ if __name__ == "__main__":
                 #1: Get model responses
                 run_inference()
                 #2: Get conformal prediction results
-                #run_conformal_prediction()
+                run_conformal_prediction()
                 
                 # Clear GPU cache after processing each dataset
                 if torch.cuda.is_available():

@@ -18,26 +18,26 @@ class Config:
         "multiclass_classification": [ "GoEmotions", "E-c"]
     }
     BASELINE_MODEL_NAMES = [
-        "lzw1008/Emollama-7b",
-        "lzw1008/Emobloom-7b",
-        "lzw1008/Emollama-chat-7b",
+        #"lzw1008/Emollama-7b",
+        #"lzw1008/Emobloom-7b",
+        #"lzw1008/Emollama-chat-7b",
         "lzw1008/Emollama-chat-13b",
-        "lzw1008/Emoopt-13b",
+        #"lzw1008/Emoopt-13b",
     ]
     BASELINE_DATASETS = [
-        "V-oc",
-        "EI-oc",
-        "SST5",
-        "E-c",
-        "GoEmotions",
-        "EI-reg", 
-        "V-reg", 
-        "V-A,V-M,V-NYT,V-T", 
+        #"V-oc",
+        #"EI-oc",
+        #"SST5",
+        #"E-c",
+        #"GoEmotions",
+        #"EI-reg", 
+        #"V-reg", 
+        #"V-A,V-M,V-NYT,V-T", 
         "SST"
     ]
 
     VERBOSE = False
-    CP_ALPHA = [0.05,0.1, 0.2, 0.3, 0.4, 0.5]
+    CP_ALPHA = [0.1, 0.2, 0.3, 0.4, 0.5]
 
     # number of repeat runs for stochastic models
     NUM_REPEATS = 10
@@ -46,7 +46,7 @@ class Config:
     MULTICLASS_CP_MODE = "hybrid"  # options: "global", "mondrian", "hybrid"
     MULTICLASS_CP_MODES = ["global", "mondrian", "hybrid"]
     REGRESSION_CP_MODE = "regression"
-    REGRESSION_CP_MODES = [ "regression",] #"quantilized_regression"]  
+    REGRESSION_CP_MODES = [ "quantilized_regression",] #"regression"]  
     
     MULTICLASS_RARE_SHRINK = 5     # τ parameter for rare-class shrinkage
 
