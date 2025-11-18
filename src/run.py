@@ -145,7 +145,7 @@ def pooled_hidden_from_inputs(model, input_ids, attention_mask, is_seq2seq: bool
     pooled = (num / den)
     return pooled
 
-def seed_everything(seed=23):
+def seed_everything(seed=123):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
