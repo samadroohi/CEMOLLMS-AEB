@@ -22,7 +22,11 @@ import pandas as pd
 from scipy import stats
 
 from ..config import Config
-from .analysis_utils import get_performance_metrics
+from .analysis_utils import (
+    analyze_ordinal_classification_results,
+    analyze_regression_results,
+    get_performance_metrics,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,24 +42,26 @@ DEFAULT_MD = OUTPUT_DIR / "performance_summary.md"
 
 
 def infer_task_type(dataset: str) -> Optional[str]:
-    """Return the high-level task type configured for a dataset name."""
+    """Return the normalized task type label for a dataset name."""
 
     priority = (
-        "multiclass_classification",
-        "ordinal_classification",
-        "classification",
-        "regression",
+        ("multiclass_classification", "multiclass_classification"),
+        ("ordinal_classification", "ordinal_classification"),
+        ("classification", "classification"),
+        ("regression", "regression_tasks"),
     )
 
-    for task in priority:
-        if dataset in Config.TASK_TYPES.get(task, []):
-            return task
+    for label, config_key in priority:
+        if dataset in Config.TASK_TYPES.get(config_key, []):
+            return label
 
-    # Fall back to the first matching entry if the dataset sits in an auxiliary
-    # collection (e.g. weighted_regression shares members with regression).
-    for task, datasets in Config.TASK_TYPES.items():
+    # Fall back to any remaining keys if a dataset lives in an auxiliary list.
+    for key, datasets in Config.TASK_TYPES.items():
         if dataset in datasets:
-            return task
+            # Normalize regression_tasks alias so downstream code sees "regression".
+            if key == "regression_tasks":
+                return "regression"
+            return key
 
     return None
 
@@ -231,17 +237,23 @@ def gather_repeat_metrics(dataset: str, record: Dict) -> Dict[str, Optional[floa
         "prediction_sets": record.get("prediction_sets", []),
     }
 
-    try:
-        performance = get_performance_metrics(payload, dataset, Config.TASK_TYPES)
-    except Exception:  # noqa: BLE001
-        performance = {}
-
     task_type = infer_task_type(dataset)
     metrics: Dict[str, Optional[float]] = {
         "f1_micro": None,
         "f1_macro": None,
         "pcc": None,
     }
+
+    performance: Dict[str, Optional[float]] = {}
+    try:
+        if task_type == "regression":
+            performance = analyze_regression_results(payload, dataset, Config.TASK_TYPES) or {}
+        elif task_type == "ordinal_classification":
+            performance = analyze_ordinal_classification_results(payload, dataset, Config.TASK_TYPES) or {}
+        else:
+            performance = get_performance_metrics(payload, dataset, Config.TASK_TYPES) or {}
+    except Exception:  # noqa: BLE001
+        performance = {}
 
     if task_type == "multiclass_classification":
         metrics["f1_micro"] = performance.get("f1_micro")

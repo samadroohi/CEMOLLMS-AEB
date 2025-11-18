@@ -796,9 +796,9 @@ if __name__ == "__main__":
                 Config.update_model_and_dataset(model_name, dataset_name)
                 
                 #1: Get model responses
-                run_inference()
+                #run_inference()
                 #2: Get conformal prediction results
-                run_conformal_prediction()
+                #run_conformal_prediction()
                 
                 # Clear GPU cache after processing each dataset
                 if torch.cuda.is_available():
@@ -810,7 +810,7 @@ if __name__ == "__main__":
                 
                 print(f"Completed processing for {model_name} on {dataset_name}")
                 print("-" * 50)
-            #run_analysis(model_name, dataset_name)
+            run_analysis(model_name, dataset_name)
     
     # Run integrated analysis after all individual analyses are complete
     #print("\nRunning integrated analysis...")

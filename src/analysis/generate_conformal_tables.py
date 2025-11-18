@@ -21,7 +21,7 @@ CONFIDENCE_LEVELS = [0.5, 0.6, 0.7, 0.8, 0.9]
 def _format_entry(mean: float | None, std: float | None) -> str:
     if mean is None or std is None:
         return "n/a"
-    return f"{mean:.2f} ±{std:.2f}"
+    return f"{mean:.3f} ±{std:.3f}"
 
 
 def _summarise_stats(df: pd.DataFrame,
@@ -62,7 +62,7 @@ def _compute_ace(coverage_stats: Iterable[tuple[float, float, float]]) -> str:
         ace_std = float(np.std(errors, ddof=0))
     else:
         ace_std = 0.0
-    return f"{ace:.2f} ±{ace_std:.2f}"
+    return f"{ace:.3f} ±{ace_std:.3f}"
 
 
 def build_table(alpha_summary: pd.DataFrame) -> pd.DataFrame:

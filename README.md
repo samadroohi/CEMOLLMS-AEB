@@ -11,3 +11,7 @@ To get calibration plots for baseline platt and isotonic regression run calibrat
 
 To get all plots for calibration of conformal pred run run_all_calibration_plots.py
 To get all tables for calibraiton of conformal prediciton run run_all_calibration_tables.py
+
+
+ To get adaptiveness of CQR python src/analysis/interval_width_diagnostics.py --alpha 0.5
+ and  python src/analysis/interval_width_integrated.py --alpha 0.5
