@@ -21,6 +21,7 @@ Then execute:
 
 ```bash
 python run.py
+```
 
 ### 2️⃣ Do initial analysis
 To get initial analysis results you should uncomment run_analysis() before running run.py 
@@ -40,6 +41,8 @@ To get all tables for calibraiton of conformal prediciton run run_all_calibratio
 
 ### 4️⃣ Installation & Requirements
 Create a virtual environment and install dependencies:
+
+```bash
 torch
 matplotlib
 scikit-learn
@@ -48,3 +51,4 @@ bitsandbytes
 pandas
 seaborn
 transformers
+```
