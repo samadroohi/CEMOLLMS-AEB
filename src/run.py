@@ -810,7 +810,7 @@ if __name__ == "__main__":
                 
                 print(f"Completed processing for {model_name} on {dataset_name}")
                 print("-" * 50)
-            run_analysis(model_name, dataset_name)
+            #run_analysis(model_name, dataset_name)
     
     # Run integrated analysis after all individual analyses are complete
     #print("\nRunning integrated analysis...")
